@@ -1,0 +1,15 @@
+# Kata: Phase 7 Dynamic Indexing Test
+# Verifica se a função `at` com TupleVararg aceita tuplas dimensionais.
+
+action main!
+    # 1. Cria uma Matriz Tensor
+    let matriz { 10 ; 20 }
+
+    # 2. Acessa uma posição específica com tupla posicional {X Y}
+    # O Type Checker de (at (1 0) Tensor) deve dar match no TupleVararg(Int) -> Result
+    let elemento (at (1 0) matriz)
+    let elemento2 (at (0) matriz)
+    
+    echo! "Elemento Extraido com Sucesso"
+
+main!
