@@ -1,0 +1,553 @@
+   Compiling kata v0.1.0 (/ag_playground/kata-cli)
+warning: unused import: `rustyline::Helper`
+ --> src/repl.rs:5:5
+  |
+5 | use rustyline::Helper;
+  |     ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `rustyline::hint::Hinter`
+ --> src/repl.rs:6:5
+  |
+6 | use rustyline::hint::Hinter;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `rustyline::highlight::Highlighter`
+ --> src/repl.rs:7:5
+  |
+7 | use rustyline::highlight::Highlighter;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `rustyline::completion::Completer`
+ --> src/repl.rs:8:5
+  |
+8 | use rustyline::completion::Completer;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::lexer::KataLexer`
+  --> src/repl.rs:12:5
+   |
+12 | use crate::lexer::KataLexer;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `imported_sig`
+   --> src/codegen/aot_compiler.rs:289:17
+    |
+289 |             let imported_sig = builder.func.import_signature(kata_sig);
+    |                 ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_imported_sig`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> src/codegen/tree_shaker.rs:27:18
+   |
+27 |     pub fn shake(mut self) -> Vec<IRFunction> {
+   |                  ----^^^^
+   |                  |
+   |                  help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `ident` is never read
+  --> src/error.rs:12:9
+   |
+12 |         ident: String,
+   |         ^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+   = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `span` is never read
+  --> src/error.rs:14:9
+   |
+14 |         span: (usize, usize),
+   |         ^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `span` is never read
+  --> src/error.rs:32:9
+   |
+32 |         span: (usize, usize),
+   |         ^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `span` is never read
+  --> src/error.rs:42:9
+   |
+42 |         span: (usize, usize),
+   |         ^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `ident` is never read
+  --> src/error.rs:51:9
+   |
+51 |         ident: String,
+   |         ^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `span` is never read
+  --> src/error.rs:53:9
+   |
+53 |         span: (usize, usize),
+   |         ^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `name` is never read
+  --> src/error.rs:95:9
+   |
+95 |         name: String,
+   |         ^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `span` is never read
+  --> src/error.rs:97:9
+   |
+97 |         span: (usize, usize),
+   |         ^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `msg` is never read
+   --> src/error.rs:116:9
+    |
+116 |         msg: String,
+    |         ^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `span` is never read
+   --> src/error.rs:118:9
+    |
+118 |         span: (usize, usize),
+    |         ^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `span` is never read
+   --> src/error.rs:131:9
+    |
+131 |         span: (usize, usize),
+    |         ^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `ident` is never read
+  --> src/error.rs:12:9
+   |
+12 |         ident: String,
+   |         ^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `c` is never read
+  --> src/error.rs:20:9
+   |
+20 |         c: char,
+   |         ^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `msg` is never read
+  --> src/error.rs:70:9
+   |
+70 |         msg: String,
+   |         ^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `expected` is never read
+  --> src/error.rs:82:9
+   |
+82 |         expected: String,
+   |         ^^^^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `found` is never read
+  --> src/error.rs:83:9
+   |
+83 |         found: String,
+   |         ^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+warning: value assigned to `name` is never read
+   --> src/error.rs:103:9
+    |
+103 |         name: String,
+    |         ^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `expected` is never read
+   --> src/error.rs:104:9
+    |
+104 |         expected: usize,
+    |         ^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `found` is never read
+   --> src/error.rs:105:9
+    |
+105 |         found: usize,
+    |         ^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: value assigned to `ident` is never read
+   --> src/error.rs:129:9
+    |
+129 |         ident: String,
+    |         ^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `param_id`
+  --> src/ir.rs:93:17
+   |
+93 |             let param_id = self.ctx.arena.alloc(IRValue::Param(i, t.clone()));
+   |                 ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_param_id`
+
+warning: unused variable: `param_id`
+   --> src/ir.rs:119:17
+    |
+119 |             let param_id = self.ctx.arena.alloc(IRValue::Param(i, t.clone()));
+    |                 ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_param_id`
+
+warning: unreachable pattern
+   --> src/ir.rs:327:13
+    |
+327 |             _ => {
+    |             ^ no value can reach this
+    |
+note: multiple earlier patterns match some of the same values
+   --> src/ir.rs:327:13
+    |
+171 |             TypedDataExpr::Literal(crate::ast::Literal::Int(n)) => {
+    |             --------------------------------------------------- matches some of the same values
+...
+174 |             TypedDataExpr::Literal(crate::ast::Literal::Float(n)) => {
+    |             ----------------------------------------------------- matches some of the same values
+...
+177 |             TypedDataExpr::Literal(crate::ast::Literal::String(s)) => {
+    |             ------------------------------------------------------ matches some of the same values
+...
+180 |             TypedDataExpr::Identifier(ident) => {
+    |             -------------------------------- matches some of the same values
+...
+327 |             _ => {
+    |             ^ ...and 6 other patterns collectively make this unreachable
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> src/parser.rs:14:13
+   |
+14 |         let mut lexer = KataLexer::new(source).peekable();
+   |             ----^^^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: unreachable pattern
+   --> src/parser.rs:247:17
+    |
+155 |                 Token::FuncIdent(ref name) | Token::SymbolIdent(ref name) | Token::ActionIdent(ref name) => {
+    |                 ---------------------------------------------------------------------------------------- matches all the relevant values
+...
+247 |                 Token::ActionIdent(name) => {
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+
+warning: variable does not need to be mutable
+  --> src/parser.rs:65:13
+   |
+65 |         let mut commit_lambdas = |decls: &mut Vec<TopLevelDecl>, name: &mut Option<Ident>, lambdas: &mut Vec<LambdaBranch>| {
+   |             ----^^^^^^^^^^^^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/parser.rs:183:29
+    |
+183 |                         let mut rest = self.parse_data_expr()?;
+    |                             ----^^^^
+    |                             |
+    |                             help: remove this `mut`
+
+warning: variable does not need to be mutable
+   --> src/parser.rs:222:29
+    |
+222 |                         let mut rest = self.parse_data_expr()?;
+    |                             ----^^^^
+    |                             |
+    |                             help: remove this `mut`
+
+warning: unreachable pattern
+   --> src/type_checker.rs:494:13
+    |
+494 |             other => Err(KataError::CrossDomainViolation { msg: format!("Expressão não portabilizada para TypedAST ainda: {:?}", other), span:(0,0) })
+    |             ^^^^^ no value can reach this
+    |
+note: multiple earlier patterns match some of the same values
+   --> src/type_checker.rs:494:13
+    |
+302 |             DataExpr::Literal(lit) => {
+    |             ---------------------- matches some of the same values
+...
+310 |             DataExpr::Identifier(ident) => {
+    |             --------------------------- matches some of the same values
+...
+330 |             DataExpr::Tuple(items) => {
+    |             ---------------------- matches some of the same values
+...
+343 |             DataExpr::Seq(list) => {
+    |             ------------------- matches some of the same values
+...
+494 |             other => Err(KataError::CrossDomainViolation { msg: format!("Expressão não portabilizada para TypedAST ainda: {:?}", other), span:(0,0) })
+    |             ^^^^^ ...and 5 other patterns collectively make this unreachable
+
+warning: variable `return_type` is assigned to, but never used
+   --> src/type_checker.rs:355:21
+    |
+355 |                 let mut return_type = Type::Unknown;
+    |                     ^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_return_type` instead
+
+warning: value assigned to `return_type` is never read
+   --> src/type_checker.rs:367:21
+    |
+367 |                     return_type = t_body.ty.clone();
+    |                     ^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `name`
+   --> src/repl.rs:124:98
+    |
+124 | ...                   if let crate::typed_ast::TypedTopLevel::Definition { name, expr } = decl {
+    |                                                                            ^^^^ help: try ignoring the field: `name: _`
+
+warning: unused variable: `e`
+   --> src/repl.rs:141:57
+    |
+141 | ...                   Err(e) => {
+    |                           ^ help: if this is intentional, prefix it with an underscore: `_e`
+
+warning: multiple variants are never constructed
+   --> src/ast.rs:125:5
+    |
+104 | pub enum ActionStmt {
+    |          ---------- variants in this enum
+...
+125 |     Assign {
+    |     ^^^^^^
+...
+131 |     Loop(Vec<ActionStmt>),
+    |     ^^^^
+132 |     For {
+    |     ^^^
+...
+139 |     Break,
+    |     ^^^^^
+140 |     Continue,
+    |     ^^^^^^^^
+...
+143 |     Match {
+    |     ^^^^^
+...
+149 |     Return(DataExpr),
+    |     ^^^^^^
+    |
+    = note: `ActionStmt` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variants `CapitalizationViolation`, `ActionWithoutParens`, `UnclosedParen`, `UndefinedSymbol`, and `ObscureSymbolWarning` are never constructed
+   --> src/error.rs:11:5
+    |
+  5 | pub enum KataError {
+    |          --------- variants in this enum
+...
+ 11 |     CapitalizationViolation {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 50 |     ActionWithoutParens {
+    |     ^^^^^^^^^^^^^^^^^^^
+...
+ 58 |     UnclosedParen {
+    |     ^^^^^^^^^^^^^
+...
+ 94 |     UndefinedSymbol {
+    |     ^^^^^^^^^^^^^^^
+...
+128 |     ObscureSymbolWarning {
+    |     ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `KataError` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: variants `List`, `Array`, and `Tensor` are never constructed
+  --> src/type_checker.rs:12:5
+   |
+ 7 | pub enum Type {
+   |          ---- variants in this enum
+...
+12 |     List(Box<Type>),
+   |     ^^^^
+13 |     Array(Box<Type>),
+   |     ^^^^^
+14 |     Tensor(Box<Type>, Vec<usize>),
+   |     ^^^^^^
+   |
+   = note: `Type` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: fields `name`, `is_action`, and `ffi_binding` are never read
+  --> src/type_checker.rs:49:9
+   |
+48 | pub struct FuncSignature {
+   |            ------------- fields in this struct
+49 |     pub name: String,
+   |         ^^^^
+...
+53 |     pub is_action: bool,
+   |         ^^^^^^^^^
+54 |     pub ffi_binding: Option<String>,
+   |         ^^^^^^^^^^^
+   |
+   = note: `FuncSignature` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: variants `VarBind`, `Assign`, `Loop`, and `Return` are never constructed
+  --> src/typed_ast.rs:79:5
+   |
+69 | pub enum TypedActionStmt {
+   |          --------------- variants in this enum
+...
+79 |     VarBind {
+   |     ^^^^^^^
+...
+83 |     Assign {
+   |     ^^^^^^
+...
+87 |     Loop(Vec<TypedActionStmt>),
+   |     ^^^^
+88 |     Return(TypedExpr),
+   |     ^^^^^^
+   |
+   = note: `TypedActionStmt` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: unused `std::result::Result` that must be used
+   --> src/jit.rs:131:9
+    |
+131 |         self.module.finalize_definitions();
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: this `Result` may be an `Err` variant, which should be handled
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+131 |         let _ = self.module.finalize_definitions();
+    |         +++++++
+
+warning: `kata` (bin "kata") generated 49 warnings (3 duplicates) (run `cargo fix --bin "kata" -p kata` to apply 15 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.81s
+     Running `target/debug/kata build examples/test_fizzbuzz_list.kata`
+Compilando AOT: examples/test_fizzbuzz_list.kata
+IRFunction {
+    name: "kata_main",
+    sig: FuncSignature {
+        name: "main!",
+        arity: 0,
+        args_types: [],
+        return_type: Unknown,
+        is_action: true,
+        ffi_binding: None,
+    },
+    ctx: IRContext {
+        arena: Arena {
+            arena_id: 4,
+            items: [
+                IntConst(
+                    0,
+                ),
+                IntConst(
+                    1,
+                ),
+                FuncPtr(
+                    "..",
+                ),
+                IntConst(
+                    15,
+                ),
+                MakeTuple(
+                    [
+                        Id {
+                            idx: 1,
+                        },
+                        Id {
+                            idx: 2,
+                        },
+                        Id {
+                            idx: 3,
+                        },
+                    ],
+                ),
+                Call {
+                    target: "List",
+                    args: [
+                        Id {
+                            idx: 4,
+                        },
+                    ],
+                    ret_type: Custom(
+                        "List::Int",
+                    ),
+                },
+                Call {
+                    target: "fizzbuzz_list",
+                    args: [
+                        Id {
+                            idx: 5,
+                        },
+                    ],
+                    ret_type: Custom(
+                        "List::Text",
+                    ),
+                },
+                Call {
+                    target: "__list_to_str",
+                    args: [
+                        Id {
+                            idx: 6,
+                        },
+                    ],
+                    ret_type: Text,
+                },
+                Call {
+                    target: "echo!",
+                    args: [
+                        Id {
+                            idx: 7,
+                        },
+                    ],
+                    ret_type: Unknown,
+                },
+            ],
+            _phantom: PhantomData<fn() -> id_arena::DefaultArenaBehavior<kata::ir::IRValue>>,
+        },
+    },
+    root: Id {
+        idx: 8,
+    },
+}
+Objeto Cranelift gerado em: examples/test_fizzbuzz_list.o
+Linkando executável final...
+/usr/bin/ld: examples/test_fizzbuzz_list.o: in function `fizzbuzz_list':
+kata_module:(.text+0x97): undefined reference to `fizzbuzz'
+collect2: error: ld returned 1 exit status
+Error:   × Falha no processo de Linkagem (cc). Código de saída: exit status: 1
+

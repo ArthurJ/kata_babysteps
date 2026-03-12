@@ -1,0 +1,16 @@
+[package]
+name = "kata-runtime"
+version = "0.1.0"
+edition = "2021"
+authors = ["Kata Lang Contributors"]
+description = "The low-level memory and execution runtime for the Kata Language"
+
+# Para ser facilmente consumível por binários nativos e Cranelift
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+num_cpus = "1.17.0"
+tokio = { version = "1.50.0", features = ["full"] }
+# Nenhuma dependência externa pesada deve entrar aqui.
+# O runtime deve ser o mais limpo e próximo do OS possível.

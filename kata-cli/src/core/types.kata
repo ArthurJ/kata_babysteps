@@ -1,0 +1,69 @@
+# O Núcleo Duro de Tipos e Matemática da Kata-Lang
+# Todas as interações com o Hardware começam aqui.
+
+# ==========================================
+# 1. As FFIs Sujas (Escondidas do Usuário)
+# ==========================================
+@ffi("kata_rt_add_int")
+__add_int :: Int Int => Int
+
+@ffi("kata_rt_sub_int")
+__sub_int :: Int Int => Int
+
+@ffi("kata_rt_mul_int")
+__mul_int :: Int Int => Int
+
+@ffi("kata_rt_div_int")
+__div_int :: Int Int => Int
+
+# ==========================================
+# 2. A Interface Mestra (NUM)
+# ==========================================
+interface NUM
+    + :: NUM NUM => NUM
+    - :: NUM NUM => NUM
+    * :: NUM NUM => NUM
+    / :: NUM NUM => NUM
+
+# ==========================================
+# 3. O Despacho Múltiplo (Multiple Dispatch)
+# ==========================================
+
+# Ensinando a linguagem que o tipo primitivo Int
+# cumpre as regras da Interface NUM, e delegando 
+# as invocações puras de Kata para os blocos de C.
+Int implements NUM
+    + :: Int Int => Int
+    lambda (a b) (__add_int a b)
+
+    - :: Int Int => Int
+    lambda (a b) (__sub_int a b)
+
+    * :: Int Int => Int
+    lambda (a b) (__mul_int a b)
+
+    / :: Int Int => Int
+    lambda (a b) (__div_int a b)
+
+# Exportando as funções limpas para o Prelude
+export NUM + - * / SHOW str
+
+# ==========================================
+# 4. Introspecção e Formatação (SHOW)
+# ==========================================
+interface SHOW
+    str :: SHOW => Text
+
+@ffi("kata_rt_int_to_str")
+__int_to_str :: Int => Text
+
+Int implements SHOW
+    str :: Int => Text
+    lambda (x) (__int_to_str x)
+@ffi("kata_rt_list_to_str")
+__list_to_str :: List::Text => Text
+
+List implements SHOW
+    str :: List::Text => Text
+    lambda (x) (__list_to_str x)
+

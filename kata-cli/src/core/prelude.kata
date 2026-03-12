@@ -1,0 +1,15 @@
+# Kata-Lang Prelude
+# O teto arquitetural de todos os projetos na linguagem.
+# Aqui expomos de forma limpa os blocos básicos da linguagem
+# sem revelar as FFI's arcanas para o usuário final.
+
+import types::(NUM + - * / SHOW str)
+import io::(echo!)
+import csp::(fork! queue! broadcast! >! <!)
+
+@ffi("kata_rt_mock_map")
+map :: Unknown Unknown => Unknown
+
+# Uma vez importadas as vertentes puras de cada módulo isolado,
+# exportamos tudo numa tacada só para o ambiente raiz do usuário.
+export NUM + - * / SHOW str echo! fork! queue! broadcast! >! <! map

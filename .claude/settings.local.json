@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /home/arthur/workspace/Kata/kata-cli && cargo build --release 2>&1 | tail -20)",
+      "Bash(./target/release/kata build:*)",
+      "Bash(cargo build:*)"
+    ]
+  }
+}
