@@ -7,7 +7,6 @@ mod ast;
 mod codegen;
 mod error;
 mod ir;
-mod jit;
 mod lexer;
 mod logger;
 mod parser;
