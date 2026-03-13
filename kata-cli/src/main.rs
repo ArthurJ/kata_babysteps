@@ -10,6 +10,7 @@ mod ir;
 mod jit;
 mod lexer;
 mod parser;
+mod recursion_analysis;
 mod type_checker;
 mod typed_ast;
 mod repl;
@@ -63,35 +64,122 @@ fn bootstrap_stdlib() -> ast::ModuleAST {
     let files = vec![types_src, io_src, csp_src, prelude_src];
     for src in files {
         let mut parser = parser::Parser::new(src);
-        if let Ok(mut ast) = parser.parse_module() {
-            stdlib_ast.declarations.append(&mut ast.declarations);
-        } else if let Err(e) = parser.parse_module() {
-            println!("Falha ao parsear StdLib: {:?}", miette::Report::new(e));
-            std::process::exit(1);
+        match parser.parse_module() {
+            Ok(mut ast) => {
+                stdlib_ast.declarations.append(&mut ast.declarations);
+            }
+            Err(e) => {
+                println!("Falha ao parsear StdLib: {:?}", miette::Report::new(e));
+                std::process::exit(1);
+            }
         }
     }
 
     stdlib_ast
 }
 
-fn compile_pipeline(entry_file: &PathBuf) -> Result<Vec<u8>> {
-    let source = fs::read_to_string(entry_file)
-        .into_diagnostic()
-        .unwrap_or_else(|err| {
-            eprintln!("Falha crítica ao ler {}: {}", entry_file.display(), err);
-            std::process::exit(1);
-        });
+/// Processa imports recursivamente e coleta declarações e exports
+fn process_imports(
+    entry_file: &PathBuf,
+    processed: &mut std::collections::HashSet<PathBuf>,
+) -> (Vec<ast::TopLevelDecl>, Vec<String>) {
+    let mut all_decls = Vec::new();
+    let mut exported_names = Vec::new();
+
+    // Evita processar o mesmo arquivo múltiplas vezes
+    if processed.contains(entry_file) {
+        return (all_decls, exported_names);
+    }
+    processed.insert(entry_file.clone());
+
+    let source = match fs::read_to_string(entry_file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Aviso: Não foi possível ler {}: {}", entry_file.display(), e);
+            return (all_decls, exported_names);
+        }
+    };
 
     let mut parser = parser::Parser::new(&source);
-    let mut user_ast = parser.parse_module().unwrap_or_else(|e| {
-        println!("{:?}", miette::Report::new(e));
-        std::process::exit(1);
-    });
+    let ast = match parser.parse_module() {
+        Ok(a) => {
+            eprintln!("DEBUG process_imports: {} declarações parseadas em {:?}", a.declarations.len(), entry_file);
+            for decl in &a.declarations {
+                eprintln!("DEBUG   - Parse: {:?}", std::mem::discriminant(decl));
+            }
+            a
+        }
+        Err(e) => {
+            eprintln!("Erro ao parsear {}: {:?}", entry_file.display(), e);
+            return (all_decls, exported_names);
+        }
+    };
+
+    // Extrai o diretório base para resolver imports relativos
+    let base_dir = entry_file.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+
+    for decl in ast.declarations {
+        match &decl {
+            ast::TopLevelDecl::Import { path, .. } => {
+                // Resolve o caminho do import
+                if let Some(ast::Ident::Func(module_name)) = path.first() {
+                    let module_path = base_dir.join(format!("{}.kata", module_name));
+                    if module_path.exists() {
+                        let (imported_decls, imported_exports) = process_imports(&module_path, processed);
+                        all_decls.extend(imported_decls);
+                        exported_names.extend(imported_exports);
+                    } else {
+                        eprintln!("Aviso: Módulo não encontrado: {}", module_path.display());
+                    }
+                }
+            }
+            ast::TopLevelDecl::Export(names) => {
+                // Coleta nomes exportados deste módulo
+                for name in names {
+                    if let ast::Ident::Func(n) | ast::Ident::Action(n) = name {
+                        exported_names.push(n.clone());
+                    }
+                }
+                // Mantém o export na AST para processamento posterior
+                all_decls.push(decl);
+            }
+            _ => {
+                all_decls.push(decl);
+            }
+        }
+    }
+
+    (all_decls, exported_names)
+}
+
+fn compile_pipeline(entry_file: &PathBuf) -> Result<Vec<u8>> {
+    // DEBUG: Ver parsing direto primeiro
+    let debug_source = fs::read_to_string(entry_file).into_diagnostic()?;
+    let mut debug_parser = parser::Parser::new(&debug_source);
+    match debug_parser.parse_module() {
+        Ok(ast) => {
+            eprintln!("DEBUG: Parsing bem-sucedido! {} declarações", ast.declarations.len());
+            for (i, decl) in ast.declarations.iter().enumerate() {
+                eprintln!("DEBUG   [{}]: {:?}", i, std::mem::discriminant(decl));
+            }
+        }
+        Err(e) => {
+            eprintln!("DEBUG: Erro no parsing: {:?}", e);
+        }
+    }
+
+    // Processa o arquivo de entrada e seus imports recursivamente
+    let mut processed_files = std::collections::HashSet::new();
+    let (mut user_decls, imported_exports) = process_imports(entry_file, &mut processed_files);
+    eprintln!("DEBUG compile_pipeline: {} declarações do usuário", user_decls.len());
+    for decl in &user_decls {
+        eprintln!("DEBUG   - Declaração: {:?}", std::mem::discriminant(decl));
+    }
 
     // Bootstrapping mágico: Colocamos o teto arquitetural da linguagem
     // acima das declarações do usuário.
     let mut master_ast = bootstrap_stdlib();
-    master_ast.declarations.append(&mut user_ast.declarations);
+    master_ast.declarations.append(&mut user_decls);
 
     let mut tc = TypeChecker::new();
     tc.discover(&master_ast).unwrap();
@@ -127,7 +215,7 @@ fn compile_pipeline(entry_file: &PathBuf) -> Result<Vec<u8>> {
     }
 
     // Adiciona as funções marcadas como 'export' aos roots para que o Tree Shaker não as elimine
-    for decl in &user_ast.declarations {
+    for decl in &user_decls {
         if let ast::TopLevelDecl::Export(names) = decl {
             for name in names {
                 if let ast::Ident::Func(n) | ast::Ident::Action(n) = name {
@@ -137,8 +225,16 @@ fn compile_pipeline(entry_file: &PathBuf) -> Result<Vec<u8>> {
         }
     }
 
+    // Adiciona as funções exportadas dos imports aos roots
+    for exported_name in &imported_exports {
+        top_level_roots.push(exported_name.clone());
+    }
+
     let shaker = TreeShaker::new(all_functions, top_level_roots.clone());
     let shaken_funcs = shaker.shake();
+    
+    // DEBUG: Ver quais funções sobreviveram
+    println!("DEBUG: Funções compiladas: {:?}", shaken_funcs.iter().map(|f| &f.name).collect::<Vec<_>>());
 
     let mut compiler = AOTCompiler::new("kata_module");
     
@@ -146,14 +242,19 @@ fn compile_pipeline(entry_file: &PathBuf) -> Result<Vec<u8>> {
         compiler.compile_function(f).unwrap();
     }
     
-    // Filtra as roots para apenas actions na hora de compilar a Main (actions terminam com '!' ou são 'kata_main')
-    let mut main_actions = Vec::new();
-    for root in &top_level_roots {
-        if root == "kata_main" || root.ends_with('!') {
-            main_actions.push(root.clone());
-        }
+    // Apenas main/kata_main é o entrypoint padrão - outras actions são chamadas explicitamente no código
+    let main_entrypoint = if top_level_roots.contains(&"main".to_string()) || top_level_roots.contains(&"main!".to_string()) {
+        vec!["main".to_string()]
+    } else if top_level_roots.contains(&"kata_main".to_string()) {
+        vec!["kata_main".to_string()]
+    } else {
+        vec![]
+    };
+
+    // Compilar wrapper main que chama a action main (se existir)
+    if !main_entrypoint.is_empty() {
+        compiler.compile_system_main(main_entrypoint).unwrap();
     }
-    compiler.compile_system_main(main_actions).unwrap();
 
     Ok(compiler.finish())
 }

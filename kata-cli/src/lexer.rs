@@ -81,6 +81,8 @@ pub enum Token {
 
     #[token("..")]
     DoubleDot,
+    #[token("..=")]
+    DoubleDotEqual,  // Range inclusivo
 
     // Operadores do Modelo CSP (Concorrência)
     #[token(">!")] // Send
@@ -115,20 +117,20 @@ pub enum Token {
 
     // ---- A Regra de Nomenclatura Estrita da Kata-Lang ----
     
-    // 1. Interfaces (ALL_CAPS) - Sem minúsculas e deve conter algo, permite sublinhado
-    #[regex(r"[A-Z_][A-Z0-9_]*", |lex| lex.slice().to_string())]
+    // 1. Interfaces (ALL_CAPS) - Começa com letra maiúscula, pode ter underscores e números, mas SEM letras minúsculas.
+    #[regex(r"[A-Z][A-Z0-9_]*", |lex| lex.slice().to_string())]
     InterfaceIdent(String),
     
-    // 2. Tipos de Dados / Enum (CamelCase) - Inicia com Maiúscula e DEVE conter letras minúsculas em algum momento para diferenciar do ALL_CAPS
+    // 2. Tipos de Dados / Enum (CamelCase) - Inicia com Maiúscula e DEVE conter letras minúsculas em algum momento
     #[regex(r"[A-Z][a-zA-Z0-9]*[a-z][a-zA-Z0-9]*", |lex| lex.slice().to_string())]
     TypeIdent(String),
     
-    // 3. Funções, Actions, Variáveis (snake_case) - Inicia minúsculo. Se for seguido de `!`, o Regex captura como ActionIdent (abaixo)
-    #[regex(r"[a-z][a-z0-9_]*", |lex| lex.slice().to_string())]
+    // 3. Funções, Actions, Variáveis (snake_case) - Inicia minúsculo ou underscore.
+    #[regex(r"[a-z_][a-z0-9_]*", |lex| lex.slice().to_string())]
     FuncIdent(String),
 
     // 4. Actions invocáveis (`snake_case!`)
-    #[regex(r"[a-z][a-z0-9_]*!", |lex| lex.slice().to_string())]
+    #[regex(r"[a-z_][a-z0-9_]*!", |lex| lex.slice().to_string())]
     ActionIdent(String),
 
     // 5. Funções Simbólicas e Matemática Arbitrária (SymbolIdent)
@@ -149,6 +151,7 @@ pub enum Token {
     Comment,
 }
 
+#[derive(Clone)]
 pub struct KataLexer<'a> {
     inner: Lexer<'a, Token>,
     indent_stack: Vec<usize>,

@@ -24,5 +24,19 @@ pub extern "C" fn kata_rt_int_to_str(value: i64) -> *mut c_char {
     let s = format!("{}", value);
     let c_str = std::ffi::CString::new(s).unwrap();
     // into_raw transfere o ownership da memória para o ambiente C/Cranelift (Memory Leak intencional no protótipo sem GC)
-    c_str.into_raw() 
+    c_str.into_raw()
+}
+
+/// Concatena duas strings e retorna uma nova string alocada.
+#[no_mangle]
+pub extern "C" fn kata_rt_concat_text(a: *const c_char, b: *const c_char) -> *mut c_char {
+    if a.is_null() || b.is_null() {
+        return std::ffi::CString::new("(null)").unwrap().into_raw();
+    }
+
+    let a_str = unsafe { CStr::from_ptr(a).to_string_lossy() };
+    let b_str = unsafe { CStr::from_ptr(b).to_string_lossy() };
+
+    let result = format!("{}{}", a_str, b_str);
+    std::ffi::CString::new(result).unwrap().into_raw()
 }

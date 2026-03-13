@@ -1,353 +1,427 @@
-use cranelift_codegen::ir::{AbiParam, InstBuilder, Signature};
+use crate::ir::{IRFunction, IRValue};
+use crate::type_checker::Type;
+use cranelift_codegen::ir::{AbiParam, Block, Signature, Value, InstBuilder};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
-use cranelift_native::builder as host_builder;
+use std::collections::HashMap;
 
-use crate::ir::{IRFunction, IRValue, ValueId};
-use crate::type_checker::Type;
-
-/// Motor Ahead-of-Time que gera arquivos Objeto (.o) binários para o SO alvo.
 pub struct AOTCompiler {
-    builder_context: FunctionBuilderContext,
-    ctx: cranelift_codegen::Context,
     module: ObjectModule,
+    ctx: cranelift_codegen::Context,
+    compiled_signatures: HashMap<String, Signature>,
 }
 
 impl AOTCompiler {
     pub fn new(module_name: &str) -> Self {
-        let mut flag_builder = settings::builder();
-        // Otimização agressiva no codegen
-        flag_builder.set("opt_level", "speed").unwrap();
-        flag_builder.set("is_pic", "true").unwrap(); // Requerido para binários modernos de SO (Position Independent Code)
-        
-        let isa_builder = host_builder().expect("Host ISA não suportada pelo Cranelift");
+        let flag_builder = settings::builder();
+        let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
+            panic!("host machine is not supported: {}", msg);
+        });
         let isa = isa_builder.finish(settings::Flags::new(flag_builder)).unwrap();
-
-        // Configura a geração de Objeto (ELF/Mach-O nativo)
         let builder = ObjectBuilder::new(
             isa,
             module_name,
             cranelift_module::default_libcall_names(),
-        ).expect("Falhou ao criar o ObjectBuilder");
-        
+        ).unwrap();
         let module = ObjectModule::new(builder);
 
         Self {
-            builder_context: FunctionBuilderContext::new(),
-            ctx: module.make_context(),
             module,
+            ctx: cranelift_codegen::Context::new(),
+            compiled_signatures: HashMap::new(),
         }
     }
-
-    /// Compila uma única função para dentro do módulo objeto atual.
 
     pub fn compile_function(&mut self, ir_func: &IRFunction) -> Result<(), String> {
         self.module.clear_context(&mut self.ctx);
 
         let int_type = cranelift_codegen::ir::types::I64;
         let ptr_type = self.module.target_config().pointer_type();
+
         let mut sig = Signature::new(self.module.target_config().default_call_conv);
-
-        for arg_ty in &ir_func.sig.args_types {
-            match arg_ty {
-                crate::type_checker::Type::Text | crate::type_checker::Type::List(_) | crate::type_checker::Type::Custom(_) => {
-                    sig.params.push(AbiParam::new(ptr_type));
-                }
-                _ => {
-                    sig.params.push(AbiParam::new(int_type));
-                }
-            }
+        for t in &ir_func.sig.args_types {
+            let cranelift_ty = match t {
+                Type::Int | Type::Bool => int_type,
+                Type::Float => cranelift_codegen::ir::types::F64,
+                _ => ptr_type,
+            };
+            sig.params.push(AbiParam::new(cranelift_ty));
         }
 
-        match &ir_func.sig.return_type {
-            crate::type_checker::Type::Text | crate::type_checker::Type::List(_) | crate::type_checker::Type::Custom(_) => {
-                sig.returns.push(AbiParam::new(ptr_type));
-            }
-            _ => {
-                sig.returns.push(AbiParam::new(int_type));
-            }
-        }
+        let ret_cranelift_ty = match &ir_func.sig.return_type {
+            Type::Int | Type::Bool => int_type,
+            Type::Float => cranelift_codegen::ir::types::F64,
+            _ => ptr_type,
+        };
+        sig.returns.push(AbiParam::new(ret_cranelift_ty));
 
-        
         self.ctx.func.signature = sig.clone();
-        
-        {
-            let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
-            let entry_block = builder.create_block();
-            
-            builder.append_block_params_for_function_params(entry_block);
-            builder.switch_to_block(entry_block);
-            builder.seal_block(entry_block);
 
-            let mut value_map = std::collections::HashMap::new();
+        let mut builder_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut builder_ctx);
 
-            for (i, _) in ir_func.sig.args_types.iter().enumerate() {
-                let val = builder.block_params(entry_block)[i];
-                for (id, ir_val) in ir_func.ctx.arena.iter() {
-                    if let IRValue::Param(idx, _) = ir_val {
-                        if *idx == i {
-                            value_map.insert(id, val);
-                        }
-                    }
-                }
-            }
-
-            fn translate(
-                id: ValueId, 
-                builder: &mut FunctionBuilder, 
-                module: &mut ObjectModule, 
-                ir_func: &IRFunction, 
-                value_map: &mut std::collections::HashMap<ValueId, cranelift_codegen::ir::Value>,
-                int_type: cranelift_codegen::ir::types::Type,
-                ptr_type: cranelift_codegen::ir::types::Type,
-            ) -> cranelift_codegen::ir::Value {
-                if let Some(&v) = value_map.get(&id) {
-                    return v;
-                }
-
-                let val = match &ir_func.ctx.arena[id] {
-                    IRValue::IntConst(n) => builder.ins().iconst(int_type, *n),
-                    IRValue::FloatConst(n) => builder.ins().f64const(*n),
-                    IRValue::StringConst(s) => {
-                        let mut data_ctx = cranelift_module::DataDescription::new();
-                        let mut bytes = s.as_bytes().to_vec();
-                        bytes.push(0); 
-                        data_ctx.define(bytes.into_boxed_slice());
-                        
-                        let name = format!("anon_string_{}_{}", ir_func.name.replace("!", "").replace("..", "dotdot"), id.index());
-                        let data_id = module.declare_data(&name, Linkage::Local, false, false).unwrap();
-                        module.define_data(data_id, &data_ctx).unwrap();
-                        
-                        let local_id = module.declare_data_in_func(data_id, &mut builder.func);
-                        builder.ins().symbol_value(ptr_type, local_id)
-                    }
-                    IRValue::FuncPtr(func_name) => {
-                        if func_name == ".." {
-                            builder.ins().iconst(int_type, 0)
-                        } else {
-                            // Import the function and return its address
-                            let mut sig = Signature::new(module.target_config().default_call_conv);
-                            // We mock the signature for the map callback
-                            sig.params.push(AbiParam::new(int_type));
-                            sig.returns.push(AbiParam::new(ptr_type));
-                            
-                            
-                            // If it's a FuncPtr to "map", we need to point to "kata_rt_mock_map"
-                            let actual_name = func_name;
-
-                            // Local linkage for fizzbuzz because it's compiled in the same module!
-                            let linkage = if actual_name == "fizzbuzz" { Linkage::Export } else { Linkage::Import };
-
-                            let actual_name_ref = if actual_name.is_empty() { "__kata_empty_func" } else { actual_name };
-                            println!("Declaring funcptr import: '{}' linkage: {:?}", actual_name_ref, linkage);
-                            let func_id = module.declare_function(actual_name_ref, linkage, &sig).unwrap();                            let local_func = module.declare_func_in_func(func_id, &mut builder.func);
-                            builder.ins().func_addr(ptr_type, local_func)
-                        }
-                    }
-                    IRValue::Param(_, _) => unreachable!("Params should be mapped"),
-                    IRValue::Call { target, args, ret_type } => {
-                        let mut arg_vals = Vec::new();
-                        for &arg in args {
-                            arg_vals.push(translate(arg, builder, module, ir_func, value_map, int_type, ptr_type));
-                        }
-
-                        if target == "+" && args.len() == 2 {
-                            builder.ins().iadd(arg_vals[0], arg_vals[1])
-                        } else if target == "-" && args.len() == 2 {
-                            builder.ins().isub(arg_vals[0], arg_vals[1])
-                        } else if target == "*" && args.len() == 2 {
-                            builder.ins().imul(arg_vals[0], arg_vals[1])
-                        } else if target == "=" && args.len() == 2 {
-                            let cmp = builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, arg_vals[0], arg_vals[1]);
-                            builder.ins().uextend(int_type, cmp)
-                        } else if target == "mod" && args.len() == 2 {
-                            builder.ins().srem(arg_vals[0], arg_vals[1])
-                        } else if target == "and" && args.len() == 2 {
-                            builder.ins().band(arg_vals[0], arg_vals[1])
-                        } else {
-                            let mut target_sig = Signature::new(module.target_config().default_call_conv);
-                            let func_name_str = if target.is_empty() { "__kata_empty_func".to_string() } else { target.clone() };
-
-                            for val in &arg_vals {
-                                let ty = builder.func.dfg.value_type(*val);
-                                target_sig.params.push(AbiParam::new(ty));
-                            }
-
-                            // Verifica o tipo de retorno explicitado na AST
-                            match ret_type {
-                                crate::type_checker::Type::Int => {
-                                    target_sig.returns.push(AbiParam::new(int_type));
-                                }
-                                crate::type_checker::Type::Float => {
-                                    target_sig.returns.push(AbiParam::new(cranelift_codegen::ir::types::F64));
-                                }
-                                crate::type_checker::Type::Text | crate::type_checker::Type::List(_) | crate::type_checker::Type::Custom(_) | crate::type_checker::Type::Array(_) => {
-                                    target_sig.returns.push(AbiParam::new(ptr_type));
-                                }
-                                crate::type_checker::Type::Tuple(_) => {
-                                    target_sig.returns.push(AbiParam::new(ptr_type));
-                                }
-                                _ => {
-                                    // Default/Unknown assume int/pointer genérico (fallback conservador)
-                                    target_sig.returns.push(AbiParam::new(int_type));
-                                }
-                            }
-
-                            if func_name_str.is_empty() { println!("WARN: declaring empty target_sig name!"); } println!("Declaring call import: '{}'", func_name_str); let func_id = module.declare_function(&func_name_str, Linkage::Import, &target_sig).unwrap();
-                            let local_func = module.declare_func_in_func(func_id, &mut builder.func);
-                            let call = builder.ins().call(local_func, &arg_vals);
-                            let results = builder.inst_results(call);
-                            if results.is_empty() {
-                                builder.ins().iconst(int_type, 0)
-                            } else {
-                                results[0]
-                            }
-                        }
-                    }
-                    IRValue::MakeTuple(items) => {
-                        let mut alloc_sig = Signature::new(module.target_config().default_call_conv);
-                        alloc_sig.params.push(AbiParam::new(cranelift_codegen::ir::types::I32)); // size
-                        alloc_sig.params.push(AbiParam::new(cranelift_codegen::ir::types::I32)); // type_tag
-                        alloc_sig.returns.push(AbiParam::new(ptr_type));
-
-                        let alloc_func_id = module.declare_function("kata_rt_alloc", Linkage::Import, &alloc_sig).unwrap();
-                        let local_alloc_func = module.declare_func_in_func(alloc_func_id, &mut builder.func);
-
-                        let size_val = builder.ins().iconst(cranelift_codegen::ir::types::I32, (items.len() * 8) as i64);
-                        let type_tag_val = builder.ins().iconst(cranelift_codegen::ir::types::I32, 1); // 1 = Tuple
-                        
-                        let call = builder.ins().call(local_alloc_func, &[size_val, type_tag_val]);
-                        let ptr_val = builder.inst_results(call)[0];
-                        
-                        for (i, item) in items.iter().enumerate() {
-                            let val = translate(*item, builder, module, ir_func, value_map, int_type, ptr_type);
-                            // Armazena no offset (cada item é i64/ptr -> 8 bytes)
-                            builder.ins().store(cranelift_codegen::ir::MemFlags::trusted(), val, ptr_val, (i * 8) as i32);
-                        }
-                        
-                        ptr_val
-                    },
-                    IRValue::Guard { condition, true_result, false_result } => {
-                        let cond_val = translate(*condition, builder, module, ir_func, value_map, int_type, ptr_type);
-                        
-                        let true_block = builder.create_block();
-                        let false_block = builder.create_block();
-                        let merge_block = builder.create_block();
-                        
-                        let cond_bool = builder.ins().icmp_imm(cranelift_codegen::ir::condcodes::IntCC::NotEqual, cond_val, 0);
-                        builder.ins().brif(cond_bool, true_block, &[], false_block, &[]);
-                        
-                        // TRUE BLOCK
-                        builder.switch_to_block(true_block);
-                        // Seal only after all predecessors are known (here, the single brif edge)
-                        builder.seal_block(true_block);
-                        let mut true_map = value_map.clone();
-                        let true_val = translate(*true_result, builder, module, ir_func, &mut true_map, int_type, ptr_type);
-                        
-                        // The type returned by Guard could be Int or Ptr. 
-                        // For simplicity, we just look at the Type of `true_val`.
-                        let val_type = builder.func.dfg.value_type(true_val);
-                        builder.ins().jump(merge_block, &[true_val]);
-                        
-                        // FALSE BLOCK
-                        builder.switch_to_block(false_block);
-                        builder.seal_block(false_block);
-                        let mut false_map = value_map.clone();
-                        let false_val = translate(*false_result, builder, module, ir_func, &mut false_map, int_type, ptr_type);
-                        builder.ins().jump(merge_block, &[false_val]);
-                        
-                        // MERGE BLOCK
-                        builder.switch_to_block(merge_block);
-                        builder.seal_block(merge_block);
-                        builder.append_block_param(merge_block, val_type);
-                        
-                        // Must sync any new states back if they mattered, but in functional IR they don't, except the return val
-                        builder.block_params(merge_block)[0]
-                    }
-                };
-
-                value_map.insert(id, val);
-                val
-            }
-
-            let return_value = translate(ir_func.root, &mut builder, &mut self.module, ir_func, &mut value_map, int_type, ptr_type);
-            builder.ins().return_(&[return_value]);
-            builder.finalize();
+        // Compila função tail-recursive ou normal
+        if ir_func.is_tail_recursive {
+            compile_tail_recursive_function(ir_func, &mut builder, &mut self.module, int_type, ptr_type)?;
+        } else {
+            compile_normal_function(ir_func, &mut builder, &mut self.module, int_type, ptr_type)?;
         }
 
+        builder.finalize();
+
+        // Exporta a função com seu nome original
         let id = self.module
             .declare_function(&ir_func.name, Linkage::Export, &self.ctx.func.signature)
             .map_err(|e| e.to_string())?;
-        
+
         self.module
             .define_function(id, &mut self.ctx)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                println!("CRANELIFT VERIFIER ERROR in {}: {:?}", ir_func.name, e);
+                e.to_string()
+            })?;
+
+        // Salva a assinatura desta função para uso posterior no wrapper main
+        self.compiled_signatures.insert(ir_func.name.clone(), self.ctx.func.signature.clone());
 
         Ok(())
     }
-        pub fn compile_system_main(&mut self, root_actions: Vec<String>) -> Result<(), String> {
+
+    pub fn compile_system_main(&mut self, root_actions: Vec<String>) -> Result<(), String> {
         self.module.clear_context(&mut self.ctx);
 
-        // Assinatura nativa da main() do C: `int main(int argc, char** argv)`
+        let int_type = cranelift_codegen::ir::types::I32;
         let mut sig = Signature::new(self.module.target_config().default_call_conv);
-        // C main signature params
-        sig.params.push(AbiParam::new(cranelift_codegen::ir::types::I32)); // argc
+        sig.params.push(AbiParam::new(int_type)); // argc
         sig.params.push(AbiParam::new(self.module.target_config().pointer_type())); // argv
-        sig.returns.push(AbiParam::new(cranelift_codegen::ir::types::I32)); // Returns int in C
-        
+        sig.returns.push(AbiParam::new(int_type));
+
         self.ctx.func.signature = sig.clone();
-        
-        {
-            let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
-            let entry_block = builder.create_block();
-            builder.append_block_params_for_function_params(entry_block);
-            builder.switch_to_block(entry_block);
-            builder.seal_block(entry_block);
 
-            // Reseta/inicializa a arena local para o ambiente da Main
-            let mut reset_sig = Signature::new(self.module.target_config().default_call_conv);
-            let reset_func_id = self.module.declare_function("kata_rt_reset_arena", Linkage::Import, &reset_sig).unwrap();
-            let local_reset_func = self.module.declare_func_in_func(reset_func_id, &mut builder.func);
-            builder.ins().call(local_reset_func, &[]);
+        let mut builder_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut builder_ctx);
 
-            // Importa a assinatura padrão das functions que construímos
-            let kata_sig = Signature::new(self.module.target_config().default_call_conv);
-            let imported_sig = builder.func.import_signature(kata_sig);
+        // Cria o bloco de entrada com os parâmetros da assinatura (argc, argv)
+        let block = builder.create_block();
+        for param in &sig.params {
+            builder.append_block_param(block, param.value_type);
+        }
+        builder.switch_to_block(block);
+        builder.seal_block(block);
 
-            for action_name in root_actions {
-                let mut action_sig = Signature::new(self.module.target_config().default_call_conv);
-                // The main action in kata takes no arguments typically, but compiled kata functions usually return I64
-                // According to compile_function, if no returns were added for Unknown type, it returns I64.
-                action_sig.returns.push(AbiParam::new(cranelift_codegen::ir::types::I64));
-                
-                let func_name = self.module.declare_function(&action_name, Linkage::Import, &action_sig).unwrap();
-                let local_func = self.module.declare_func_in_func(func_name, &mut builder.func);
-                // Dispara a Action top-level
-                builder.ins().call(local_func, &[]);
-            }
+        // Chama a action main/kata_main (único entrypoint padrão)
+        for action in root_actions {
+            let lookup_names = if action == "main" {
+                vec!["kata_main".to_string(), "main!".to_string(), "main".to_string()]
+            } else {
+                vec![action.clone()]
+            };
 
-            // main() do C espera retornar `0` para indicar sucesso pro SO!
-            let exit_code = builder.ins().iconst(cranelift_codegen::ir::types::I32, 0);
-            builder.ins().return_(&[exit_code]);
-            builder.finalize();
+            let (func_name, action_sig) = lookup_names.iter()
+                .find_map(|name| {
+                    self.compiled_signatures.get(name).map(|sig| (name.clone(), sig.clone()))
+                })
+                .unwrap_or_else(|| {
+                    eprintln!("AVISO: Assinatura não encontrada para {}, usando padrão", action);
+                    (action.clone(), Signature::new(self.module.target_config().default_call_conv))
+                });
+
+            let func_id = self.module.declare_function(&func_name, Linkage::Import, &action_sig)
+                .map_err(|e| format!("Erro ao declarar action {}: {}", func_name, e))?;
+            let local_func = self.module.declare_func_in_func(func_id, &mut builder.func);
+            builder.ins().call(local_func, &[]);
         }
 
-        // Exporta a `main` publicamente pro GCC encontrar no Linker!
-        let id = self.module
-            .declare_function("main", Linkage::Export, &self.ctx.func.signature)
-            .map_err(|e| e.to_string())?;
-            
-        self.module
-            .define_function(id, &mut self.ctx)
-            .map_err(|e| e.to_string())?;
+        let ret_val = builder.ins().iconst(int_type, 0);
+        builder.ins().return_(&[ret_val]);
+        builder.finalize();
 
+        let id = self.module.declare_function("main", Linkage::Export, &self.ctx.func.signature).unwrap();
+        self.module.define_function(id, &mut self.ctx).map_err(|e| {
+            println!("CRANELIFT VERIFIER ERROR in wrapper main: {:?}", e);
+            e.to_string()
+        })?;
         Ok(())
     }
 
-    /// Emite o byte array do binário no formato da máquina alvo (.o)
     pub fn finish(self) -> Vec<u8> {
-        self.module.finish().emit().unwrap()
+        let product = self.module.finish();
+        product.emit().unwrap()
     }
+}
+
+/// Compila uma função tail-recursive com estrutura de loop
+fn compile_tail_recursive_function(
+    ir_func: &IRFunction,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    int_type: cranelift_codegen::ir::types::Type,
+    ptr_type: cranelift_codegen::ir::types::Type,
+) -> Result<(), String> {
+    // Cria blocos: entry -> loop_block
+    let entry_block = builder.create_block();
+    let loop_block = builder.create_block();
+
+    // Entry block: apenas passa os parâmetros iniciais para o loop
+    builder.switch_to_block(entry_block);
+    builder.append_block_params_for_function_params(entry_block);
+
+    // Passa os parâmetros do entry para o loop_block
+    let entry_params: Vec<Value> = (0..ir_func.sig.args_types.len())
+        .map(|i| builder.block_params(entry_block)[i])
+        .collect();
+    builder.ins().jump(loop_block, &entry_params);
+    builder.seal_block(entry_block);
+
+    // Loop block: onde a lógica da função é executada
+    builder.switch_to_block(loop_block);
+    for t in &ir_func.sig.args_types {
+        let cranelift_ty = match t {
+            Type::Int | Type::Bool => int_type,
+            Type::Float => cranelift_codegen::ir::types::F64,
+            _ => ptr_type,
+        };
+        builder.append_block_param(loop_block, cranelift_ty);
+    }
+
+    // Mapeia parâmetros do loop_block
+    let mut value_map: HashMap<crate::ir::ValueId, Value> = HashMap::new();
+    for (i, _) in ir_func.sig.args_types.iter().enumerate() {
+        let val = builder.block_params(loop_block)[i];
+        for (id, ir_val) in ir_func.ctx.arena.iter() {
+            if let IRValue::Param(idx, _) = ir_val {
+                if *idx == i {
+                    value_map.insert(id, val);
+                }
+            }
+        }
+    }
+
+    // Traduz a raiz da função
+    let return_value = translate(
+        ir_func.root,
+        builder,
+        module,
+        ir_func,
+        &mut value_map,
+        int_type,
+        ptr_type,
+        loop_block,
+    );
+
+    // Adiciona return apenas se o bloco não foi terminado por TailRecurse
+    if let Some(val) = return_value {
+        builder.ins().return_(&[val]);
+    }
+
+    builder.seal_block(loop_block);
+
+    Ok(())
+}
+
+/// Compila uma função normal (não tail-recursive)
+fn compile_normal_function(
+    ir_func: &IRFunction,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    int_type: cranelift_codegen::ir::types::Type,
+    ptr_type: cranelift_codegen::ir::types::Type,
+) -> Result<(), String> {
+    // Cria o bloco de entrada
+    let entry_block = builder.create_block();
+    builder.switch_to_block(entry_block);
+    builder.append_block_params_for_function_params(entry_block);
+
+    // Mapeia parâmetros IR para valores Cranelift
+    let mut value_map: HashMap<crate::ir::ValueId, Value> = HashMap::new();
+    for (i, _) in ir_func.sig.args_types.iter().enumerate() {
+        let val = builder.block_params(entry_block)[i];
+        for (id, ir_val) in ir_func.ctx.arena.iter() {
+            if let IRValue::Param(idx, _) = ir_val {
+                if *idx == i {
+                    value_map.insert(id, val);
+                }
+            }
+        }
+    }
+
+    // Traduz o corpo da função
+    let return_value = translate(
+        ir_func.root,
+        builder,
+        module,
+        ir_func,
+        &mut value_map,
+        int_type,
+        ptr_type,
+        entry_block,
+    );
+
+    // Adiciona return apenas se o bloco não foi terminado
+    if let Some(val) = return_value {
+        builder.ins().return_(&[val]);
+    }
+    builder.seal_block(entry_block);
+
+    Ok(())
+}
+
+/// Traduz um nó IR para instruções Cranelift
+/// Retorna Some(Value) ou None se o bloco foi terminado (por TailRecurse)
+fn translate(
+    id: crate::ir::ValueId,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ir_func: &IRFunction,
+    value_map: &mut HashMap<crate::ir::ValueId, Value>,
+    int_type: cranelift_codegen::ir::types::Type,
+    ptr_type: cranelift_codegen::ir::types::Type,
+    loop_block: Block,
+) -> Option<Value> {
+    if let Some(&v) = value_map.get(&id) {
+        return Some(v);
+    }
+
+    let val: Value = match &ir_func.ctx.arena[id] {
+        IRValue::IntConst(n) => builder.ins().iconst(int_type, *n),
+        IRValue::FloatConst(n) => builder.ins().f64const(*n),
+        IRValue::StringConst(s) => {
+            let data_id = module.declare_data(&format!("str_{}", id.index()), Linkage::Export, false, false).unwrap();
+            let mut desc = cranelift_module::DataDescription::new();
+            desc.define(s.as_bytes().to_vec().into_boxed_slice());
+            module.define_data(data_id, &desc).unwrap();
+            let local_data = module.declare_data_in_func(data_id, &mut builder.func);
+            builder.ins().symbol_value(ptr_type, local_data)
+        }
+        IRValue::FuncPtr(name) => {
+            if name == "kata_main" {
+                builder.ins().iconst(ptr_type, 0)
+            } else {
+                let mut sig = Signature::new(module.target_config().default_call_conv);
+                sig.params.push(AbiParam::new(int_type));
+                sig.returns.push(AbiParam::new(ptr_type));
+
+                let linkage = if name == "kata_main" || name.starts_with("impl_") { Linkage::Export } else { Linkage::Import };
+                let func_id = module.declare_function(name, linkage, &sig).unwrap();
+                let local_func = module.declare_func_in_func(func_id, &mut builder.func);
+                builder.ins().func_addr(ptr_type, local_func)
+            }
+        }
+        IRValue::Param(_, _) => unreachable!("Params should be mapped"),
+        IRValue::Call { target, args, ret_type, is_tail_call: _ } => {
+            let mut arg_vals = Vec::new();
+            for &arg in args {
+                if let Some(v) = translate(arg, builder, module, ir_func, value_map, int_type, ptr_type, loop_block) {
+                    arg_vals.push(v);
+                }
+            }
+
+            let mut target_sig = Signature::new(module.target_config().default_call_conv);
+            for val in &arg_vals {
+                let ty = builder.func.dfg.value_type(*val);
+                target_sig.params.push(AbiParam::new(ty));
+            }
+
+            let ret_cranelift_ty = match ret_type {
+                Type::Int | Type::Bool => int_type,
+                Type::Float => cranelift_codegen::ir::types::F64,
+                _ => ptr_type,
+            };
+            target_sig.returns.push(AbiParam::new(ret_cranelift_ty));
+
+            let func_id = module.declare_function(target, Linkage::Import, &target_sig).unwrap();
+            let local_func = module.declare_func_in_func(func_id, &mut builder.func);
+            let call = builder.ins().call(local_func, &arg_vals);
+            builder.inst_results(call)[0]
+        }
+        IRValue::TailRecurse { args } => {
+            // TCO: Atualiza os parâmetros do loop e faz jump
+            let mut arg_vals = Vec::new();
+            for &arg in args {
+                if let Some(v) = translate(arg, builder, module, ir_func, value_map, int_type, ptr_type, loop_block) {
+                    arg_vals.push(v);
+                }
+            }
+
+            eprintln!("DEBUG: Aplicando TCO (TailRecurse)");
+            builder.ins().jump(loop_block, &arg_vals);
+
+            // Bloco terminado - retorna None
+            return None;
+        }
+        IRValue::MakeTuple(items) => {
+            let mut item_vals = Vec::new();
+            for &i in items {
+                if let Some(v) = translate(i, builder, module, ir_func, value_map, int_type, ptr_type, loop_block) {
+                    item_vals.push(v);
+                }
+            }
+            if item_vals.is_empty() { builder.ins().iconst(int_type, 0) }
+            else { item_vals[0] }
+        }
+        IRValue::MakeClosure { code_ptr, env_captures: _ } => {
+            let mut sig = Signature::new(module.target_config().default_call_conv);
+            sig.params.push(AbiParam::new(ptr_type));
+            sig.params.push(AbiParam::new(int_type));
+            sig.returns.push(AbiParam::new(ptr_type));
+
+            let linkage = if code_ptr.starts_with("impl_") { Linkage::Export } else { Linkage::Import };
+            let func_id = module.declare_function(code_ptr, linkage, &sig).unwrap();
+            let local_func = module.declare_func_in_func(func_id, &mut builder.func);
+            builder.ins().func_addr(ptr_type, local_func)
+        }
+        IRValue::Guard { condition, true_result, false_result } => {
+            let cond_val = translate(*condition, builder, module, ir_func, value_map, int_type, ptr_type, loop_block)?;
+
+            let true_block = builder.create_block();
+            let false_block = builder.create_block();
+            let merge_block = builder.create_block();
+
+            builder.ins().brif(cond_val, true_block, &[], false_block, &[]);
+
+            // True branch
+            builder.switch_to_block(true_block);
+            builder.seal_block(true_block);
+            let mut true_map = value_map.clone();
+            let true_val = translate(*true_result, builder, module, ir_func, &mut true_map, int_type, ptr_type, loop_block);
+
+            // Verifica se o true branch terminou
+            let true_terminated = true_val.is_none();
+            let val_type = if let Some(v) = true_val {
+                let t = builder.func.dfg.value_type(v);
+                builder.ins().jump(merge_block, &[v]);
+                t
+            } else {
+                int_type
+            };
+
+            // False branch
+            builder.switch_to_block(false_block);
+            builder.seal_block(false_block);
+            let mut false_map = value_map.clone();
+            let false_val = translate(*false_result, builder, module, ir_func, &mut false_map, int_type, ptr_type, loop_block);
+
+            let false_terminated = false_val.is_none();
+            if let Some(v) = false_val {
+                builder.ins().jump(merge_block, &[v]);
+            }
+
+            // Merge block
+            if true_terminated && false_terminated {
+                // Ambos terminaram - isso é incomum mas pode acontecer
+                // Retornamos um valor dummy
+                builder.ins().iconst(int_type, 0)
+            } else {
+                builder.switch_to_block(merge_block);
+                builder.seal_block(merge_block);
+                builder.append_block_param(merge_block, val_type);
+                builder.block_params(merge_block)[0]
+            }
+        }
+    };
+
+    value_map.insert(id, val);
+    Some(val)
 }

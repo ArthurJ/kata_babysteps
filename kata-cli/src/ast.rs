@@ -55,6 +55,7 @@ pub enum DataExpr {
     GuardBlock {
         branches: Vec<GuardBranch>,
         otherwise: Box<DataExpr>,
+        with_clauses: Vec<Binding>,
     },
     
     /// Bloco de Escopo Funcional (let / as) e restrições (with).
@@ -63,6 +64,29 @@ pub enum DataExpr {
         bindings: Vec<Binding>,
         body: Box<DataExpr>,
         with_clauses: Vec<Binding>,
+    },
+
+    /// Tensor com dimensões explícitas.
+    /// Criado quando `;` é usado em blocos `{}`.
+    /// Ex: `{1 2 ; 3 4}` é um tensor 2x2.
+    Tensor {
+        elements: Vec<DataExpr>,
+        dimensions: Vec<usize>,
+    },
+
+    /// Range/Intervalo de valores.
+    /// Ex: `[1..10]`, `[1..=10]`, `[..10]`, `[1..]`
+    Range {
+        start: Option<Box<DataExpr>>,  // None para `[..10]`
+        end: Option<Box<DataExpr>>,    // None para `[1..]`
+        inclusive: bool,               // true para `..=`, false para `..`
+    },
+
+    /// Acesso a campo/módulo via dot notation.
+    /// Ex: `mock_math.dobrar`, `lista.length`
+    FieldAccess {
+        target: Box<DataExpr>,
+        field: String,
     },
 }
 
@@ -82,6 +106,7 @@ pub struct GuardBranch {
 pub struct Binding {
     pub pattern: Pattern,
     pub expr: DataExpr,
+    pub type_annotation: Option<String>, // NOVO: anotação de tipo opcional com ::
 }
 
 /// Padrões para Desestruturação e Pattern Matching em Lambdas e Matches.
@@ -115,6 +140,7 @@ pub enum ActionStmt {
     LetBind {
         pattern: Pattern,
         expr: DataExpr,
+        type_annotation: Option<String>, // NOVO: anotação de tipo opcional com ::
     },
     VarBind {
         name: Ident, // `var` não suporta destructuring complexo diretamente, apenas rebinding de nome
@@ -185,7 +211,7 @@ pub enum TopLevelDecl {
     InterfaceDef {
         name: Ident,
         supertraits: Vec<Ident>,
-        signatures: Vec<TypeSignature>,
+        methods: Vec<TopLevelDecl>, // Contém SignatureDecls
     },
     
     /// Assinatura de Tipo (ex: `soma :: Int Int => Int`)

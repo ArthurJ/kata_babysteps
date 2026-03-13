@@ -16,6 +16,12 @@ __mul_int :: Int Int => Int
 @ffi("kata_rt_div_int")
 __div_int :: Int Int => Int
 
+@ffi("kata_rt_mod_int")
+__mod_int :: Int Int => Int
+
+@ffi("kata_rt_eq_int")
+__eq_int :: Int Int => Bool
+
 # ==========================================
 # 2. A Interface Mestra (NUM)
 # ==========================================
@@ -45,8 +51,24 @@ Int implements NUM
     / :: Int Int => Int
     lambda (a b) (__div_int a b)
 
+    mod :: Int Int => Int
+    lambda (a b) (__mod_int a b)
+
+    = :: Int Int => Bool
+    lambda (a b) (__eq_int a b)
+
 # Exportando as funções limpas para o Prelude
-export NUM + - * / SHOW str
+export NUM + - * / = mod SHOW str AND and
+
+# ==========================================
+# 6. Concatenação de Texto (CONCAT)
+# ==========================================
+interface CONCAT
+    + :: CONCAT CONCAT => CONCAT
+
+Text implements CONCAT
+    + :: Text Text => Text
+    lambda (a b) (__concat_text a b)
 
 # ==========================================
 # 4. Introspecção e Formatação (SHOW)
@@ -63,7 +85,23 @@ Int implements SHOW
 @ffi("kata_rt_list_to_str")
 __list_to_str :: List::Text => Text
 
+@ffi("kata_rt_concat_text")
+__concat_text :: Text Text => Text
+
 List implements SHOW
     str :: List::Text => Text
     lambda (x) (__list_to_str x)
+
+# ==========================================
+# 5. Operações Lógicas (AND)
+# ==========================================
+interface AND
+    and :: AND AND => AND
+
+@ffi("kata_rt_and_bool")
+__and_bool :: Bool Bool => Bool
+
+Bool implements AND
+    and :: Bool Bool => Bool
+    lambda (a b) (__and_bool a b)
 

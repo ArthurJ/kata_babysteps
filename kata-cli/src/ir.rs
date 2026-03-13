@@ -41,17 +41,34 @@ pub enum IRValue {
         target: String,
         args: Vec<ValueId>,
         ret_type: Type,
+        /// Se true, esta é uma tail call recursiva que pode ser otimizada como jump
+        is_tail_call: bool,
     },
     
     /// Construtor bruto de tuplas
     MakeTuple(Vec<ValueId>),
-    
+
+    /// Construtor de Closure (code_ptr, env_ptr)
+    /// Usado para criar closures de primeira classe que podem ser passadas como argumentos
+    MakeClosure {
+        code_ptr: String,           // Nome da função compilada
+        env_captures: Vec<ValueId>, // Valores capturados do ambiente
+    },
+
     // ---- Controle de Fluxo ----
     /// Representa um fluxo de desvio (if/else aninhado)
     Guard {
         condition: ValueId,
         true_result: ValueId,
         false_result: ValueId,
+    },
+
+    // ---- Tail Call Optimization (TCO) ----
+    /// Nó especial para TCO - representa "atualizar parâmetros e repetir"
+    /// Usado apenas dentro de funções tail-recursive
+    /// Este nó é terminal (como um return) - o bloco termina aqui
+    TailRecurse {
+        args: Vec<ValueId>,  // Novos valores para os parâmetros
     },
 }
 
@@ -62,9 +79,12 @@ pub struct IRFunction {
     pub name: String,
     pub sig: crate::type_checker::FuncSignature,
     pub ctx: IRContext,
-    
+
     /// O nó final do DAG que representa a resposta do fluxo de controle principal da função.
-    pub root: ValueId, 
+    pub root: ValueId,
+
+    /// Se true, esta função é tail-recursive e usa TailRecurse no corpo
+    pub is_tail_recursive: bool,
 }
 
 /// O construtor que converte TypedAST -> IR.
@@ -93,7 +113,7 @@ impl IRBuilder {
             let param_id = self.ctx.arena.alloc(IRValue::Param(i, t.clone()));
             // Simulação de nomes para parâmetros
             // Na Kata-Lang os nomes vem do pattern matching `lambda (x)`.
-            // Para a fase 4 minimalista de Constant Folding, não estamos bindando 
+            // Para a fase 4 minimalista de Constant Folding, não estamos bindando
             // os nomes do pattern matching ainda, apenas transcrevendo Call e Literal.
         }
 
@@ -102,12 +122,94 @@ impl IRBuilder {
         // ==== PASSAGEM DE OTIMIZAÇÃO (Middle-End) ====
         let optimized_root = self.optimize_constant_folding(root_id);
 
+        // ==== PASSAGEM DE TCO (Tail Call Optimization) ====
+        // Transforma calls recursivas em TailRecurse
+        let (tco_root, is_tail_recursive) = self.mark_tail_calls(name, optimized_root);
+
         IRFunction {
             name: name.to_string(),
             sig,
             ctx: self.ctx.clone(),
-            root: optimized_root,
+            root: tco_root,
+            is_tail_recursive,
         }
+    }
+
+    /// Transforma chamadas recursivas em TailRecurse no DAG
+    /// Retorna (novo_root, true_se_houver_tail_calls)
+    fn mark_tail_calls(&mut self, func_name: &str, root_id: ValueId) -> (ValueId, bool) {
+        self.mark_tail_calls_recursive(func_name, root_id, true)
+    }
+
+    fn mark_tail_calls_recursive(&mut self,
+        func_name: &str,
+        id: ValueId,
+        in_tail_position: bool
+    ) -> (ValueId, bool) {
+        let val = self.ctx.arena[id].clone();
+
+        match &val {
+            // Guard: processa os branches
+            IRValue::Guard { condition, true_result, false_result } => {
+                let (new_cond, cond_has_tc) = self.mark_tail_calls_recursive(func_name, *condition, false);
+                let (new_true, true_has_tc) = self.mark_tail_calls_recursive(func_name, *true_result, in_tail_position);
+                let (new_false, false_has_tc) = self.mark_tail_calls_recursive(func_name, *false_result, in_tail_position);
+
+                let has_tail_call = cond_has_tc || true_has_tc || false_has_tc;
+
+                if new_cond != *condition || new_true != *true_result || new_false != *false_result {
+                    let new_id = self.ctx.arena.alloc(IRValue::Guard {
+                        condition: new_cond,
+                        true_result: new_true,
+                        false_result: new_false,
+                    });
+                    return (new_id, has_tail_call);
+                }
+                return (id, has_tail_call);
+            }
+
+            // Call: verifica se é recursiva e em posição de cauda
+            IRValue::Call { target, args, ret_type: _, is_tail_call: _ } => {
+                let is_recursive = target == func_name;
+
+                // Processa argumentos (nunca em posição de cauda)
+                let mut new_args = Vec::new();
+                let mut args_have_tc = false;
+                for arg in args {
+                    let (new_arg, has_tc) = self.mark_tail_calls_recursive(func_name, *arg, false);
+                    new_args.push(new_arg);
+                    args_have_tc = args_have_tc || has_tc;
+                }
+
+                if is_recursive && in_tail_position {
+                    // Converte para TailRecurse - instrução terminal
+                    eprintln!("DEBUG IRBuilder: Convertendo call recursiva para TailRecurse em '{}'", func_name);
+                    let new_id = self.ctx.arena.alloc(IRValue::TailRecurse {
+                        args: new_args,
+                    });
+                    return (new_id, true);
+                } else if new_args != *args || args_have_tc {
+                    // Recria com novos argumentos
+                    let ret_type = if let IRValue::Call { ret_type, .. } = &self.ctx.arena[id] {
+                        ret_type.clone()
+                    } else {
+                        Type::Unknown
+                    };
+                    let new_id = self.ctx.arena.alloc(IRValue::Call {
+                        target: target.clone(),
+                        args: new_args,
+                        ret_type,
+                        is_tail_call: false,
+                    });
+                    return (new_id, args_have_tc);
+                }
+            }
+
+            // Outros casos: não precisam de processamento especial
+            _ => {}
+        }
+
+        (id, false)
     }
 
 
@@ -126,7 +228,7 @@ impl IRBuilder {
                 TypedActionStmt::Expr(expr) => {
                     last_id = self.lower_expr(expr);
                 }
-                TypedActionStmt::LetBind { pattern, expr } => {
+                TypedActionStmt::LetBind { pattern, expr, type_annotation: _ } => {
                     let val_id = self.lower_expr(expr);
                     if let crate::ast::Pattern::Identifier(crate::ast::Ident::Func(n)) = pattern {
                         self.env.insert(n.clone(), val_id);
@@ -148,6 +250,7 @@ impl IRBuilder {
                         target: target_name,
                         args: arg_ids,
                         ret_type: crate::type_checker::Type::Unknown, // Actions costumam não retornar no mock atual
+                        is_tail_call: false,
                     });
                 }
                 _ => {}
@@ -156,11 +259,13 @@ impl IRBuilder {
 
         let optimized_root = self.optimize_constant_folding(last_id);
 
+        // Actions não são tail-recursive por definição (não se chamam recursivamente)
         IRFunction {
             name: name.to_string(),
             sig,
             ctx: self.ctx.clone(),
             root: optimized_root,
+            is_tail_recursive: false,
         }
     }
 
@@ -179,22 +284,29 @@ impl IRBuilder {
             }
             TypedDataExpr::Identifier(ident) => {
                 let name = match ident {
-                    crate::ast::Ident::Func(n) | crate::ast::Ident::Symbol(n) => n.clone(),
-                    _ => return self.ctx.arena.alloc(IRValue::IntConst(0)), // Avoid breaking Linker with empty FuncPtr
+                    crate::ast::Ident::Func(n) | crate::ast::Ident::Symbol(n) | crate::ast::Ident::Action(n) => n.clone(),
+                    _ => "unknown_ident".to_string(),
                 };
+
+                // O Type Checker já resolveu o monomorfismo - usamos o nome diretamente
                 if let Some(&id) = self.env.get(&name) {
                     id
+                } else if name == "_" {
+                    // Hole não vinculado - em aplicações parciais, isso é um erro
+                    // Por enquanto, retornamos um placeholder que será substituído
+                    eprintln!("WARNING: Hole '_' não vinculado em aplicação parcial não implementado");
+                    self.ctx.arena.alloc(IRValue::IntConst(0)) // Placeholder
                 } else {
                     self.ctx.arena.alloc(IRValue::FuncPtr(name.clone()))
                 }
             }
             TypedDataExpr::Call { target, args } => {
-                let target_name = if let TypedDataExpr::Identifier(crate::ast::Ident::Symbol(n) | crate::ast::Ident::Func(n) | crate::ast::Ident::Type(n)) = &target.expr {
-                    n.clone()
-                } else {
-                    "unknown_call".to_string()
+                let mut target_name = match &target.expr {
+                    TypedDataExpr::Identifier(crate::ast::Ident::Func(n) | crate::ast::Ident::Symbol(n) | crate::ast::Ident::Action(n)) => n.clone(),
+                    _ => "unknown_call".to_string(),
                 };
 
+                // O Type Checker já resolveu o monomorfismo - usamos o nome diretamente
                 let mut arg_ids = Vec::new();
                 for a in args {
                     arg_ids.push(self.lower_expr(a));
@@ -204,6 +316,7 @@ impl IRBuilder {
                     target: target_name,
                     args: arg_ids,
                     ret_type: expr.ty.clone(),
+                    is_tail_call: false, // Será atualizado posteriormente se for TCO
                 })
             }
             TypedDataExpr::Pipe { left, right } => {
@@ -240,7 +353,19 @@ impl IRBuilder {
                 }
                 self.lower_expr(body)
             }
-            TypedDataExpr::GuardBlock { branches, otherwise } => {
+            TypedDataExpr::GuardBlock { branches, otherwise, with_clauses } => {
+                // Processa cláusulas WITH primeiro para que os ramos as enxerguem
+                eprintln!("DEBUG GuardBlock: processing {} with_clauses", with_clauses.len());
+                for w in with_clauses {
+                    eprintln!("DEBUG GuardBlock: with clause {:?} = {:?}", w.pattern, w.expr);
+                    let val_id = self.lower_expr(&w.expr);
+                    if let crate::ast::Pattern::Identifier(crate::ast::Ident::Func(n)) = &w.pattern {
+                        eprintln!("DEBUG GuardBlock: inserting {} into env", n);
+                        self.env.insert(n.clone(), val_id);
+                    }
+                }
+                eprintln!("DEBUG GuardBlock: env keys: {:?}", self.env.keys().collect::<Vec<_>>());
+
                 let mut current_otherwise = self.lower_expr(otherwise);
                 
                 for branch in branches.iter().rev() {
@@ -270,15 +395,17 @@ impl IRBuilder {
                                 has_unconditional_match = false;
                                 let lit_id = self.ctx.arena.alloc(IRValue::IntConst(*n));
                                 let eq_id = self.ctx.arena.alloc(IRValue::Call {
-                                    target: "=".to_string(),
+                                    target: "impl_Int_NUM_=".to_string(),
                                     args: vec![param_id, lit_id],
                                     ret_type: Type::Bool,
+                                    is_tail_call: false,
                                 });
                                 cond_id = Some(if let Some(c) = cond_id {
                                     self.ctx.arena.alloc(IRValue::Call {
-                                        target: "and".to_string(),
+                                        target: "impl_Bool_AND_and".to_string(),
                                         args: vec![c, eq_id],
                                         ret_type: Type::Bool,
+                                        is_tail_call: false,
                                     })
                                 } else {
                                     eq_id
@@ -304,6 +431,40 @@ impl IRBuilder {
                     }
                 }
                 current_otherwise
+            }
+            TypedDataExpr::Range { start, end, inclusive } => {
+                // Para ranges numéricos, geramos uma chamada à runtime
+                // kata_rt_list_from_range(start, end, inclusive, step=1, type_tag)
+                let start_id = match start {
+                    Some(s) => self.lower_expr(s),
+                    None => self.ctx.arena.alloc(IRValue::IntConst(0)), // Range aberto no início
+                };
+                let end_id = match end {
+                    Some(e) => self.lower_expr(e),
+                    None => self.ctx.arena.alloc(IRValue::IntConst(i64::MAX)), // Range aberto no fim
+                };
+                let inclusive_id = self.ctx.arena.alloc(IRValue::IntConst(if *inclusive { 1 } else { 0 }));
+                let step_id = self.ctx.arena.alloc(IRValue::IntConst(1));
+                let type_tag = self.ctx.arena.alloc(IRValue::IntConst(0)); // 0 = Int
+
+                self.ctx.arena.alloc(IRValue::Call {
+                    target: "kata_rt_list_from_range".to_string(),
+                    args: vec![start_id, end_id, inclusive_id, step_id, type_tag],
+                    ret_type: expr.ty.clone(),
+                    is_tail_call: false,
+                })
+            }
+            TypedDataExpr::FieldAccess { target, field } => {
+                // Para acesso a módulo (module.func), o type checker já resolveu
+                // o nome completo. Se o target for um Ident, combinamos com o campo.
+                if let TypedDataExpr::Identifier(crate::ast::Ident::Func(module_name)) = &target.expr {
+                    let full_name = format!("{}.{}", module_name, field);
+                    self.ctx.arena.alloc(IRValue::FuncPtr(full_name))
+                } else {
+                    // Para acesso a campo de struct (futuro), precisamos de mais informação
+                    eprintln!("WARNING: FieldAccess em runtime ainda não implementado para {:?}", target);
+                    self.ctx.arena.alloc(IRValue::FuncPtr(field.clone()))
+                }
             }
             _ => {
                 self.ctx.arena.alloc(IRValue::IntConst(0))
@@ -341,26 +502,39 @@ impl IRBuilder {
             // Se os operandos são puramente constantes e a função é segura
             if all_constants {
                 // Lógica Mágica do Compilador: Executa a matemática em Rust!
-                if target == "+" {
-                    let mut sum = 0;
-                    for a in &opt_args {
-                        if let IRValue::IntConst(n) = self.ctx.arena[*a] {
-                            sum += n;
+                match target.as_str() {
+                    "+" => {
+                        let mut sum = 0;
+                        for a in &opt_args {
+                            if let IRValue::IntConst(n) = self.ctx.arena[*a] { sum += n; }
+                        }
+                        return self.ctx.arena.alloc(IRValue::IntConst(sum));
+                    }
+                    "-" => {
+                        if opt_args.len() >= 2 {
+                            if let (IRValue::IntConst(a), IRValue::IntConst(b)) = (&self.ctx.arena[opt_args[0]], &self.ctx.arena[opt_args[1]]) {
+                                return self.ctx.arena.alloc(IRValue::IntConst(a - b));
+                            }
                         }
                     }
-                    // Retorna um nó NOVO otimizado, abandonando a Call velha no DAG
-                    return self.ctx.arena.alloc(IRValue::IntConst(sum));
-                }
-                if target == "*" {
-                    let mut prod = 1;
-                    for a in &opt_args {
-                        if let IRValue::IntConst(n) = self.ctx.arena[*a] {
-                            prod *= n;
+                    "*" => {
+                        let mut prod = 1;
+                        for a in &opt_args {
+                            if let IRValue::IntConst(n) = self.ctx.arena[*a] { prod *= n; }
+                        }
+                        return self.ctx.arena.alloc(IRValue::IntConst(prod));
+                    }
+                    "/" => {
+                        if opt_args.len() >= 2 {
+                            if let (IRValue::IntConst(a), IRValue::IntConst(b)) = (&self.ctx.arena[opt_args[0]], &self.ctx.arena[opt_args[1]]) {
+                                if *b != 0 {
+                                    return self.ctx.arena.alloc(IRValue::IntConst(a / b));
+                                }
+                            }
                         }
                     }
-                    return self.ctx.arena.alloc(IRValue::IntConst(prod));
+                    _ => {}
                 }
-                // TODO: -, / e afins
             }
             
             // Se não deu pra dobrar constantes, mas atualizamos as folhas, 

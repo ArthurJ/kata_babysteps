@@ -118,6 +118,20 @@ pub enum KataError {
         span: (usize, usize),
     },
 
+    // ---- Recursion Errors ----
+    #[error("Recursão excede limite de profundidade.")]
+    #[diagnostic(
+        code(kata::recursion::depth_exceeded),
+        help("{help}")
+    )]
+    RecursionDepthExceeded {
+        limit: usize,
+        estimated: Option<usize>,
+        help: String,
+        #[label("Recursão ilimitada ou muito profunda detectada aqui")]
+        span: (usize, usize),
+    },
+
     // ---- Warnings ----
     #[error("Uso de operador simbólico customizado `{ident}`.")]
     #[diagnostic(
@@ -128,6 +142,19 @@ pub enum KataError {
     ObscureSymbolWarning {
         ident: String,
         #[label("Símbolo customizado detectado aqui")]
+        span: (usize, usize),
+    },
+
+    #[error("Função recursiva sem Tail Call Optimization (TCO).")]
+    #[diagnostic(
+        severity(warning),
+        code(kata::recursion::non_tail_recursive),
+        help("Esta função é recursiva mas não pode usar TCO. Isso pode causar stack overflow.\nConsidere reescrever usando um acumulador (como 'fat_tail') ou garantir que a chamada recursiva seja a última operação.")
+    )]
+    NonTailRecursionWarning {
+        func_name: String,
+        reason: String,
+        #[label("Chamada recursiva não-TCO detectada")]
         span: (usize, usize),
     },
 }

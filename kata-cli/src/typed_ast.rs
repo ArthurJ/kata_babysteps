@@ -37,12 +37,26 @@ pub enum TypedDataExpr {
     GuardBlock {
         branches: Vec<TypedGuardBranch>,
         otherwise: Box<TypedExpr>,
+        with_clauses: Vec<TypedBinding>,
     },
     
     ScopedBlock {
         bindings: Vec<TypedBinding>,
         body: Box<TypedExpr>,
         with_clauses: Vec<TypedBinding>,
+    },
+
+    /// Range de valores (transformado em lista pela runtime)
+    Range {
+        start: Option<Box<TypedExpr>>,
+        end: Option<Box<TypedExpr>>,
+        inclusive: bool,
+    },
+
+    /// Acesso a campo/módulo
+    FieldAccess {
+        target: Box<TypedExpr>,
+        field: String,
     },
 }
 
@@ -75,6 +89,7 @@ pub enum TypedActionStmt {
     LetBind {
         pattern: Pattern,
         expr: TypedExpr,
+        type_annotation: Option<String>,
     },
     VarBind {
         name: Ident,

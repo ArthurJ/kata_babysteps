@@ -5,8 +5,8 @@ lambda (x)
     buzz: "Buzz"
     otherwise: str x
     with
-        fizz as == 0 (mod x 3)
-        buzz as == 0 (mod x 5)
+        fizz as = 0 (mod x 3)
+        buzz as = 0 (mod x 5)
         both as and fizz buzz
 
 action main

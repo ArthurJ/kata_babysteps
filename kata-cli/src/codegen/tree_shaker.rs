@@ -28,8 +28,15 @@ impl TreeShaker {
         let mut visited = HashSet::new();
         let mut queue: Vec<String> = self.roots.clone();
 
+        // Adiciona funções repl_eval_ e impl_ como raízes automaticamente
+        for name in self.available_funcs.keys() {
+            if name.starts_with("repl_eval") || name.starts_with("impl_") {
+                queue.push(name.clone());
+            }
+        }
+
         // Operadores intrínsecos e FFI que nunca devem ser chacoalhados
-        let instrinsics = vec!["+", "-", "*", "/", "echo!"];
+        let instrinsics = vec!["+", "-", "*", "/", "echo!", "kata_rt_print_str", "kata_rt_int_to_str", "kata_rt_add_int", "kata_rt_sub_int", "kata_rt_mul_int", "kata_rt_div_int"];
         for op in instrinsics {
             visited.insert(op.to_string());
         }
@@ -40,10 +47,8 @@ impl TreeShaker {
                 continue;
             }
 
-            // Puxa a IRFunction se ela existir no módulo (pode ser intrínseca/FFI e não estar na lista)
             if let Some(func) = self.available_funcs.get(&current_func_name) {
                 // Varre TODOS os blocos e instruções do DAG dessa função buscando novas chamadas
-                // Por ora o IRBuilder simples tem só o nó root alocado. Numa IR real, iteraremos arena.iter().
                 for (_id, val) in func.ctx.arena.iter() {
                     match val {
                         IRValue::Call { target, .. } => {

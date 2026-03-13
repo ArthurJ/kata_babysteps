@@ -1,15 +1,37 @@
 # Kata-Lang Prelude
 # O teto arquitetural de todos os projetos na linguagem.
-# Aqui expomos de forma limpa os blocos básicos da linguagem
-# sem revelar as FFI's arcanas para o usuário final.
+# Aqui expomos de forma limpa os blocos basicos da linguagem
+# sem revelar as FFI's arcanas para o usuario final.
 
-import types::(NUM + - * / SHOW str)
+import types::(NUM + - * / = mod SHOW str AND and CONCAT)
 import io::(echo!)
 import csp::(fork! queue! broadcast! >! <!)
 
-@ffi("kata_rt_mock_map")
+# FFI para criacao de listas a partir de ranges
+# (start, step, end, elem_size, type_tag) -> List
+@ffi("kata_rt_list_from_range")
+list_from_range :: Int Int Int Int Int => Unknown
+
+# FFI para map usando KataClosure
+# Recebe uma closure e uma lista, retorna nova lista mapeada
+@ffi("kata_rt_map")
 map :: Unknown Unknown => Unknown
 
-# Uma vez importadas as vertentes puras de cada módulo isolado,
-# exportamos tudo numa tacada só para o ambiente raiz do usuário.
-export NUM + - * / SHOW str echo! fork! queue! broadcast! >! <! map
+# FFI para filter usando KataClosure
+# Recebe uma closure predicado e uma lista, retorna lista filtrada
+@ffi("kata_rt_filter")
+filter :: Unknown Unknown => Unknown
+
+# FFI para fold usando KataClosure
+# Recebe closure (acc val -> acc), valor inicial, lista
+@ffi("kata_rt_fold")
+fold :: Unknown Unknown Unknown => Unknown
+
+# FFI para zip
+# Combina duas listas em uma lista de tuplas
+@ffi("kata_rt_zip")
+zip :: Unknown Unknown => Unknown
+
+# Uma vez importadas as vertentes puras de cada modulo isolado,
+# exportamos tudo numa tacada so para o ambiente raiz do usuario.
+export NUM + - * / = mod SHOW str AND and CONCAT echo! fork! queue! broadcast! >! <! map filter fold zip list_from_range
