@@ -361,22 +361,22 @@ impl TypeChecker {
                     self.env.push_scope();
 
                     // Análise de recursão ANTES de resolver (precisa da AST original)
-                    eprintln!("DEBUG RecursionAnalysis: Processando definição de {:?}, expr tipo {:?}", name, std::mem::discriminant(&expr));
+                    log::debug!("RecursionAnalysis: Processando definição de {:?}, expr tipo {:?}", name, std::mem::discriminant(&expr));
 
                     if let DataExpr::LambdaGroup { ref branches } = expr {
-                        eprintln!("DEBUG RecursionAnalysis: É LambdaGroup com {} branches", branches.len());
+                        log::debug!("RecursionAnalysis: É LambdaGroup com {} branches", branches.len());
                         let func_name = match &name {
                             Ident::Func(n) | Ident::Symbol(n) => n.clone(),
                             _ => String::new(),
                         };
 
-                        eprintln!("DEBUG RecursionAnalysis: LambdaGroup encontrado para '{}' com {} branches", func_name, branches.len());
+                        log::debug!("RecursionAnalysis: LambdaGroup encontrado para '{}' com {} branches", func_name, branches.len());
 
                         if !func_name.is_empty() {
                             let analyzer = RecursionAnalyzer::new();
                             let analysis = analyzer.analyze_function(&func_name, branches);
 
-                            eprintln!("DEBUG RecursionAnalysis: Análise para '{}': {:?}", func_name, analysis);
+                            log::debug!("RecursionAnalysis: Análise para '{}': {:?}", func_name, analysis);
 
                             // Verifica limites de profundidade
                             if let Err(e) = analyzer.check_depth_limit(&analysis) {
@@ -384,18 +384,18 @@ impl TypeChecker {
                             }
 
                             // Emite warning para recursão não-TCO
-                            eprintln!("DEBUG RecursionAnalysis: Verificando se precisa emitir warning...");
+                            log::debug!("RecursionAnalysis: Verificando se precisa emitir warning...");
                             match &analysis {
                                 RecursionAnalysis::NonTailRecursive { reason, .. } => {
                                     let reason_str = format!("{:?}", reason);
-                                    eprintln!("AVISO: Função '{}' é recursiva sem TCO ({}). Considere reescrever com acumulador.",
+                                    log::warn!("Função '{}' é recursiva sem TCO ({}). Considere reescrever com acumulador.",
                                              func_name, reason_str);
                                 }
                                 RecursionAnalysis::TailRecursive { .. } => {
-                                    eprintln!("DEBUG RecursionAnalysis: Função '{}' é tail recursive - OK", func_name);
+                                    log::debug!("RecursionAnalysis: Função '{}' é tail recursive - OK", func_name);
                                 }
                                 _ => {
-                                    eprintln!("DEBUG RecursionAnalysis: Análise não requer warning: {:?}", analysis);
+                                    log::debug!("RecursionAnalysis: Análise não requer warning: {:?}", analysis);
                                 }
                             }
                         }
@@ -544,7 +544,7 @@ impl TypeChecker {
 
                 let local_ty = self.env.lookup_local(&name);
                 let sig = self.env.get_signature(&name);
-                eprintln!("DEBUG TypeChecker: Identifier {} - local_ty: {:?}, sig: {}", name, local_ty, sig.is_some());
+                log::debug!("TypeChecker: Identifier {} - local_ty: {:?}, sig: {}", name, local_ty, sig.is_some());
 
                 let mut ty = if let Some(local_ty) = local_ty {
                     local_ty
@@ -681,7 +681,7 @@ impl TypeChecker {
                     });
                 }
                 let t_otherwise = self.resolve_expr(*otherwise, in_action)?;
-                eprintln!("DEBUG TypeChecker: otherwise type = {:?}", t_otherwise.ty);
+                log::debug!("TypeChecker: otherwise type = {:?}", t_otherwise.ty);
                 self.env.pop_scope();
                 Ok(TypedExpr { 
                     ty: t_otherwise.ty.clone(), 
@@ -728,7 +728,7 @@ impl TypeChecker {
                 // Na implementação atual, transformamos em uma chamada direta
                 if let TypedDataExpr::Identifier(Ident::Func(module_name)) = &t_target.expr {
                     let full_name = format!("{}.{}", module_name, field);
-                    eprintln!("DEBUG TypeChecker: Resolvendo FieldAccess: {}.{}", module_name, field);
+                    log::debug!("TypeChecker: Resolvendo FieldAccess: {}.{}", module_name, field);
 
                     // Verifica se a função existe no ambiente
                     if let Some(sig) = self.env.get_signature(&full_name) {
@@ -854,16 +854,16 @@ impl TypeChecker {
                             let type_name = format!("{}", arg_ty);
                             
                             if let Some(sig) = self.env.get_signature(&resolved_name) {
-                                eprintln!("DEBUG: Assinatura encontrada para '{}': {:?}", resolved_name, sig);
+                                log::debug!("Assinatura encontrada para '{}': {:?}", resolved_name, sig);
                             } else {
-                                eprintln!("DEBUG: Nenhuma assinatura para '{}'", resolved_name);
+                                log::debug!("Nenhuma assinatura para '{}'", resolved_name);
                             }
 
                             if let Some(resolved) = self.env.resolve_method(&type_name, &resolved_name) {
-                                eprintln!("DEBUG: Método resolvido: {} -> {}", resolved_name, resolved);
+                                log::debug!("Método resolvido: {} -> {}", resolved_name, resolved);
                                 resolved_name = resolved;
                             } else {
-                                eprintln!("DEBUG: Tentando resolver '{}' para tipo '{}', arg_ty={:?}", resolved_name, type_name, arg_ty);
+                                log::debug!("Tentando resolver '{}' para tipo '{}', arg_ty={:?}", resolved_name, type_name, arg_ty);
                                 // Para operadores aritméticos, assume Int se o tipo for Unknown
                                 let effective_type = if type_name == "?" {
                                     match resolved_name.as_str() {
@@ -876,11 +876,11 @@ impl TypeChecker {
                                 match resolved_name.as_str() {
                                     "+" if effective_type == "Int" => resolved_name = "impl_Int_NUM_+".to_string(),
                                     "-" if effective_type == "Int" => {
-                                        eprintln!("DEBUG: Resolvendo '-' para impl_Int_NUM_-, arg_ty={}", effective_type);
+                                        log::debug!("Resolvendo '-' para impl_Int_NUM_-, arg_ty={}", effective_type);
                                         resolved_name = "impl_Int_NUM_-".to_string();
                                     }
                                     "*" if effective_type == "Int" => {
-                                        eprintln!("DEBUG: Resolvendo '*' para impl_Int_NUM_*, arg_ty={}", effective_type);
+                                        log::debug!("Resolvendo '*' para impl_Int_NUM_*, arg_ty={}", effective_type);
                                         resolved_name = "impl_Int_NUM_*".to_string();
                                     }
                                     "/" if effective_type == "Int" => resolved_name = "impl_Int_NUM_/".to_string(),

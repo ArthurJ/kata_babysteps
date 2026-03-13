@@ -25,7 +25,7 @@ impl<'a> Parser<'a> {
     fn next_token(&mut self) -> Result<Option<Token>, KataError> {
         // Se há um token empurrado de volta, retorna ele primeiro
         if let Some(token) = self.pushed_back_token.take() {
-            eprintln!("DEBUG: next_token retornando pushed_back_token: {:?}", token);
+            log::debug!("next_token retornando pushed_back_token: {:?}", token);
             return Ok(Some(token));
         }
         match self.lexer.next() {
@@ -55,7 +55,7 @@ impl<'a> Parser<'a> {
 
     /// Empurra um token de volta ao buffer para ser reprocessado
     fn push_back_token(&mut self, token: Token) {
-        eprintln!("DEBUG: push_back_token chamado com {:?}", token);
+        log::debug!("push_back_token chamado com {:?}", token);
         self.pushed_back_token = Some(token);
     }
 
@@ -349,7 +349,7 @@ impl<'a> Parser<'a> {
                     // VERIFICAÇÃO CRÍTICA: Se há um token empurrado de volta (ex: assinatura de função
                     // detectada dentro de um with), precisamos processá-lo antes de criar a definição sintética
                     if let Some(ref pushed) = self.pushed_back_token {
-                        eprintln!("DEBUG: Token empurrado detectado após parse_data_expr: {:?}", pushed);
+                        log::debug!("Token empurrado detectado após parse_data_expr: {:?}", pushed);
                         // Se for um FuncIdent, é uma assinatura de função que precisa ser processada
                         if let Token::FuncIdent(name) = pushed.clone() {
                             // Limpa o pushed_back_token pois vamos processar manualmente
@@ -569,10 +569,10 @@ impl<'a> Parser<'a> {
     /// Parse o tipo dentro de [ ] para o açúcar sintático [T] -> List::T
     fn parse_list_type_argument(&mut self) -> Result<String, KataError> {
         let mut result = String::new();
-        eprintln!("DEBUG: parse_list_type_argument iniciado");
+        log::debug!("parse_list_type_argument iniciado");
 
         while let Some(tok) = self.peek_token_safe()? {
-            eprintln!("DEBUG: token no loop: {:?}", tok);
+            log::debug!("token no loop: {:?}", tok);
             match tok {
                 Token::RBracket => {
                     self.next_token()?; // consome ']'
@@ -1108,13 +1108,13 @@ impl<'a> Parser<'a> {
     fn parse_data_expr(&mut self) -> Result<DataExpr, KataError> {
         let mut items = Vec::new();
 
-        eprintln!("DEBUG: parse_data_expr iniciado, pushed_back_token: {:?}", self.pushed_back_token);
+        log::debug!("parse_data_expr iniciado, pushed_back_token: {:?}", self.pushed_back_token);
 
         // VERIFICAÇÃO CRÍTICA: Se há um token empurrado de volta (ex: assinatura de função
         // detectada dentro de um with), precisamos parar imediatamente para não consumi-lo.
         // Isso permite que o token seja processado pelo contexto superior (top-level).
         if self.pushed_back_token.is_some() {
-            eprintln!("DEBUG: Token empurrado detectado no início de parse_data_expr, parando imediatamente");
+            log::debug!("Token empurrado detectado no início de parse_data_expr, parando imediatamente");
             return Ok(DataExpr::Tuple(vec![]));
         }
 
@@ -1337,19 +1337,19 @@ impl<'a> Parser<'a> {
                                 Token::WithKw => {
                                     self.next_token()?;
                                     'with_loop: while let Some(t) = self.peek_token_safe()? {
-                                        eprintln!("DEBUG: Token no with loop: {:?}", t);
+                                        log::debug!("Token no with loop: {:?}", t);
                                         if matches!(t, Token::Newline | Token::Dedent | Token::Whitespace | Token::Indent) { self.next_token()?; continue; }
                                         match t {
                                             Token::FuncIdent(name) => {
-                                                eprintln!("DEBUG: With binding candidato: {}", name);
+                                                log::debug!("With binding candidato: {}", name);
                                                 // CONSOME o FuncIdent primeiro
                                                 self.next_token()?;
                                                 // Agora verifica se o próximo é ::
                                                 let is_signature = self.is_next_token_doublecolon()?;
-                                                eprintln!("DEBUG: Próximo é ::? {}", is_signature);
+                                                log::debug!("Próximo é ::? {}", is_signature);
 
                                                 if is_signature {
-                                                    eprintln!("DEBUG: {} é assinatura de função, saindo do with", name);
+                                                    log::debug!("{} é assinatura de função, saindo do with", name);
                                                     // Re-empurra o FuncIdent para ser reprocessado pelo parser principal
                                                     self.push_back_token(Token::FuncIdent(name));
                                                     break 'with_loop;
@@ -1433,13 +1433,13 @@ impl<'a> Parser<'a> {
                             }
                         }
 
-                        eprintln!("DEBUG: Saindo do with, pushed_back_token: {:?}", self.pushed_back_token);
+                        log::debug!("Saindo do with, pushed_back_token: {:?}", self.pushed_back_token);
 
                         // VERIFICAÇÃO CRÍTICA: Se há um token empurrado (assinatura de função detectada),
                         // precisamos sair do parse_data_expr imediatamente para não consumir o token.
                         // Retornamos o GuardBlock construído até agora.
                         if self.pushed_back_token.is_some() {
-                            eprintln!("DEBUG: Token empurrado detectado após with, saindo de parse_data_expr");
+                            log::debug!("Token empurrado detectado após with, saindo de parse_data_expr");
                             // Constrói o GuardBlock com o que temos até agora
                             let guard_block = DataExpr::GuardBlock { branches, otherwise, with_clauses };
                             items.push(guard_block);
@@ -1617,8 +1617,7 @@ impl<'a> Parser<'a> {
     /// Parse uma expressão de range: [start..end], [start..=end], [..end], [start..]
     /// Assume que o '[' já foi consumido e estamos no primeiro token do conteúdo
     fn parse_range(&mut self) -> Result<DataExpr, KataError> {
-        // DEBUG
-        eprintln!("DEBUG: parse_range iniciado");
+        log::debug!("parse_range iniciado");
 
         // Verifica se começa com .. (range aberto no início)
         if let Some(Token::DoubleDot) = self.peek_token_safe()? {
@@ -1641,7 +1640,7 @@ impl<'a> Parser<'a> {
                 }
             };
 
-            eprintln!("DEBUG: parse_range retornando Range aberto no início, inclusive={}", inclusive);
+            log::debug!("parse_range retornando Range aberto no início, inclusive={}", inclusive);
             return Ok(DataExpr::Range {
                 start: None,
                 end,
@@ -1675,7 +1674,7 @@ impl<'a> Parser<'a> {
                     }
                 };
 
-                eprintln!("DEBUG: parse_range retornando Range completo");
+                log::debug!("parse_range retornando Range completo");
                 Ok(DataExpr::Range {
                     start,
                     end,
@@ -1683,7 +1682,7 @@ impl<'a> Parser<'a> {
                 })
             }
             other => {
-                eprintln!("DEBUG: parse_range esperava DoubleDot, encontrou {:?}", other);
+                log::debug!("parse_range esperava DoubleDot, encontrou {:?}", other);
                 Err(KataError::UnexpectedToken {
                     msg: format!("Esperado '..' em range (Recebeu: {:?})", other),
                     span: (self.current_span.start, self.current_span.end),

@@ -9,6 +9,7 @@ mod error;
 mod ir;
 mod jit;
 mod lexer;
+mod logger;
 mod parser;
 mod recursion_analysis;
 mod type_checker;
@@ -38,11 +39,23 @@ enum Commands {
     Build {
         /// O arquivo de entrada principal (.kata)
         entry_file: PathBuf,
+        /// Imprimir tokens (saída do lexer)
+        #[arg(long)]
+        dump_tokens: bool,
+        /// Imprimir AST (saída do parser)
+        #[arg(long)]
+        dump_ast: bool,
     },
     /// Compila e executa o binário imediatamente
     Run {
         /// O arquivo de entrada principal (.kata)
         entry_file: PathBuf,
+        /// Imprimir tokens (saída do lexer)
+        #[arg(long)]
+        dump_tokens: bool,
+        /// Imprimir AST (saída do parser)
+        #[arg(long)]
+        dump_ast: bool,
     },
     /// Executa testes anotados com @test no arquivo ou diretório
     Test {
@@ -95,7 +108,7 @@ fn process_imports(
     let source = match fs::read_to_string(entry_file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Aviso: Não foi possível ler {}: {}", entry_file.display(), e);
+            log::warn!("Não foi possível ler {}: {}", entry_file.display(), e);
             return (all_decls, exported_names);
         }
     };
@@ -103,14 +116,14 @@ fn process_imports(
     let mut parser = parser::Parser::new(&source);
     let ast = match parser.parse_module() {
         Ok(a) => {
-            eprintln!("DEBUG process_imports: {} declarações parseadas em {:?}", a.declarations.len(), entry_file);
+            log::debug!("process_imports: {} declarações parseadas em {:?}", a.declarations.len(), entry_file);
             for decl in &a.declarations {
-                eprintln!("DEBUG   - Parse: {:?}", std::mem::discriminant(decl));
+                log::debug!("  - Parse: {:?}", std::mem::discriminant(decl));
             }
             a
         }
         Err(e) => {
-            eprintln!("Erro ao parsear {}: {:?}", entry_file.display(), e);
+            log::error!("Erro ao parsear {}: {:?}", entry_file.display(), e);
             return (all_decls, exported_names);
         }
     };
@@ -129,7 +142,7 @@ fn process_imports(
                         all_decls.extend(imported_decls);
                         exported_names.extend(imported_exports);
                     } else {
-                        eprintln!("Aviso: Módulo não encontrado: {}", module_path.display());
+                        log::warn!("Módulo não encontrado: {}", module_path.display());
                     }
                 }
             }
@@ -158,22 +171,22 @@ fn compile_pipeline(entry_file: &PathBuf) -> Result<Vec<u8>> {
     let mut debug_parser = parser::Parser::new(&debug_source);
     match debug_parser.parse_module() {
         Ok(ast) => {
-            eprintln!("DEBUG: Parsing bem-sucedido! {} declarações", ast.declarations.len());
+            log::debug!("Parsing bem-sucedido! {} declarações", ast.declarations.len());
             for (i, decl) in ast.declarations.iter().enumerate() {
-                eprintln!("DEBUG   [{}]: {:?}", i, std::mem::discriminant(decl));
+                log::debug!("  [{}]: {:?}", i, std::mem::discriminant(decl));
             }
         }
         Err(e) => {
-            eprintln!("DEBUG: Erro no parsing: {:?}", e);
+            log::debug!("Erro no parsing: {:?}", e);
         }
     }
 
     // Processa o arquivo de entrada e seus imports recursivamente
     let mut processed_files = std::collections::HashSet::new();
     let (mut user_decls, imported_exports) = process_imports(entry_file, &mut processed_files);
-    eprintln!("DEBUG compile_pipeline: {} declarações do usuário", user_decls.len());
+    log::debug!("compile_pipeline: {} declarações do usuário", user_decls.len());
     for decl in &user_decls {
-        eprintln!("DEBUG   - Declaração: {:?}", std::mem::discriminant(decl));
+        log::debug!("  - Declaração: {:?}", std::mem::discriminant(decl));
     }
 
     // Bootstrapping mágico: Colocamos o teto arquitetural da linguagem
@@ -234,7 +247,7 @@ fn compile_pipeline(entry_file: &PathBuf) -> Result<Vec<u8>> {
     let shaken_funcs = shaker.shake();
     
     // DEBUG: Ver quais funções sobreviveram
-    println!("DEBUG: Funções compiladas: {:?}", shaken_funcs.iter().map(|f| &f.name).collect::<Vec<_>>());
+    log::debug!("Funções compiladas: {:?}", shaken_funcs.iter().map(|f| &f.name).collect::<Vec<_>>());
 
     let mut compiler = AOTCompiler::new("kata_module");
     
@@ -259,23 +272,76 @@ fn compile_pipeline(entry_file: &PathBuf) -> Result<Vec<u8>> {
     Ok(compiler.finish())
 }
 
+/// Print tokens from a source file
+fn print_tokens(source: &str) {
+    println!("=== TOKENS ===");
+    let lexer = lexer::KataLexer::new(source);
+    for (i, result) in lexer.enumerate() {
+        match result {
+            Ok((token, span)) => {
+                let text = &source[span.clone()];
+                println!("[{:4}] {:?} at {:?} = '{}'", i, token, span, text);
+            }
+            Err(e) => {
+                println!("[{:4}] ERROR: {:?}", i, e);
+            }
+        }
+    }
+    println!("==============\n");
+}
+
+/// Print AST from a source file
+fn print_ast(source: &str) {
+    println!("=== AST ===");
+    let mut parser = parser::Parser::new(source);
+    match parser.parse_module() {
+        Ok(ast) => {
+            println!("{:#?}", ast);
+        }
+        Err(e) => {
+            println!("Parse error: {:?}", miette::Report::new(e));
+        }
+    }
+    println!("===========\n");
+}
+
 fn main() -> Result<()> {
+    logger::init_logger();
     let start_time = Instant::now();
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Build { entry_file } => {
+        Commands::Build { entry_file, dump_tokens, dump_ast } => {
             if !entry_file.exists() {
                 miette::bail!("Erro: O arquivo de entrada '{}' não foi encontrado.", entry_file.display());
             }
+
+            // Read source once for potential dumping
+            let source = fs::read_to_string(entry_file).into_diagnostic()?;
+
+            // Dump tokens if requested
+            if *dump_tokens {
+                print_tokens(&source);
+            }
+
+            // Dump AST if requested
+            if *dump_ast {
+                print_ast(&source);
+            }
+
+            // If only dumping, skip compilation
+            if *dump_tokens || *dump_ast {
+                return Ok(());
+            }
+
             println!("Compilando AOT: {}", entry_file.display());
-            
+
             let obj_bytes = compile_pipeline(entry_file)?;
-            
+
             // Escreve output.o
             let out_o_path = entry_file.with_extension("o");
             let out_bin_path = entry_file.with_extension(""); // Binário final
-            
+
             fs::write(&out_o_path, obj_bytes).into_diagnostic()?;
             println!("Objeto Cranelift gerado em: {}", out_o_path.display());
             
@@ -316,10 +382,29 @@ fn main() -> Result<()> {
 
             print_elapsed(start_time, "Build");
         }
-        Commands::Run { entry_file } => {
+        Commands::Run { entry_file, dump_tokens, dump_ast } => {
             if !entry_file.exists() {
                 miette::bail!("Erro: O arquivo de entrada '{}' não foi encontrado.", entry_file.display());
             }
+
+            // Read source once for potential dumping
+            let source = fs::read_to_string(entry_file).into_diagnostic()?;
+
+            // Dump tokens if requested
+            if *dump_tokens {
+                print_tokens(&source);
+            }
+
+            // Dump AST if requested
+            if *dump_ast {
+                print_ast(&source);
+            }
+
+            // If only dumping, skip compilation
+            if *dump_tokens || *dump_ast {
+                return Ok(());
+            }
+
             println!("Compilando pipeline para Run: {}", entry_file.display());
             let _obj_bytes = compile_pipeline(entry_file)?;
             println!("Pipeline completo! Execução nativa simulada (Linker desativado nesta Fase)");

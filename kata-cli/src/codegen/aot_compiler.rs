@@ -79,7 +79,7 @@ impl AOTCompiler {
         self.module
             .define_function(id, &mut self.ctx)
             .map_err(|e| {
-                println!("CRANELIFT VERIFIER ERROR in {}: {:?}", ir_func.name, e);
+                log::error!("CRANELIFT VERIFIER ERROR in {}: {:?}", ir_func.name, e);
                 e.to_string()
             })?;
 
@@ -124,7 +124,7 @@ impl AOTCompiler {
                     self.compiled_signatures.get(name).map(|sig| (name.clone(), sig.clone()))
                 })
                 .unwrap_or_else(|| {
-                    eprintln!("AVISO: Assinatura não encontrada para {}, usando padrão", action);
+                    log::warn!("Assinatura não encontrada para {}, usando padrão", action);
                     (action.clone(), Signature::new(self.module.target_config().default_call_conv))
                 });
 
@@ -140,7 +140,7 @@ impl AOTCompiler {
 
         let id = self.module.declare_function("main", Linkage::Export, &self.ctx.func.signature).unwrap();
         self.module.define_function(id, &mut self.ctx).map_err(|e| {
-            println!("CRANELIFT VERIFIER ERROR in wrapper main: {:?}", e);
+            log::error!("CRANELIFT VERIFIER ERROR in wrapper main: {:?}", e);
             e.to_string()
         })?;
         Ok(())
@@ -345,7 +345,7 @@ fn translate(
                 }
             }
 
-            eprintln!("DEBUG: Aplicando TCO (TailRecurse)");
+            log::debug!("Aplicando TCO (TailRecurse)");
             builder.ins().jump(loop_block, &arg_vals);
 
             // Bloco terminado - retorna None

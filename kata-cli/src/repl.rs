@@ -53,6 +53,7 @@ impl Validator for KataReplHelper {
 }
 
 pub fn start() -> Result<()> {
+    crate::logger::init_logger();
     println!("Kata-Lang REPL (v0.1.0)");
     println!("Dica: Digite .exit ou .quit para sair, ou pressione Ctrl+D.");
     println!("Dica: Use Alt+Enter (Option+Enter) para quebrar linha manualmente sem executar.");

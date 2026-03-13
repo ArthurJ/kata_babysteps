@@ -183,7 +183,7 @@ impl IRBuilder {
 
                 if is_recursive && in_tail_position {
                     // Converte para TailRecurse - instrução terminal
-                    eprintln!("DEBUG IRBuilder: Convertendo call recursiva para TailRecurse em '{}'", func_name);
+                    log::debug!("IRBuilder: Convertendo call recursiva para TailRecurse em '{}'", func_name);
                     let new_id = self.ctx.arena.alloc(IRValue::TailRecurse {
                         args: new_args,
                     });
@@ -294,7 +294,7 @@ impl IRBuilder {
                 } else if name == "_" {
                     // Hole não vinculado - em aplicações parciais, isso é um erro
                     // Por enquanto, retornamos um placeholder que será substituído
-                    eprintln!("WARNING: Hole '_' não vinculado em aplicação parcial não implementado");
+                    log::warn!("Hole '_' não vinculado em aplicação parcial não implementado");
                     self.ctx.arena.alloc(IRValue::IntConst(0)) // Placeholder
                 } else {
                     self.ctx.arena.alloc(IRValue::FuncPtr(name.clone()))
@@ -355,16 +355,16 @@ impl IRBuilder {
             }
             TypedDataExpr::GuardBlock { branches, otherwise, with_clauses } => {
                 // Processa cláusulas WITH primeiro para que os ramos as enxerguem
-                eprintln!("DEBUG GuardBlock: processing {} with_clauses", with_clauses.len());
+                log::debug!("GuardBlock: processing {} with_clauses", with_clauses.len());
                 for w in with_clauses {
-                    eprintln!("DEBUG GuardBlock: with clause {:?} = {:?}", w.pattern, w.expr);
+                    log::debug!("GuardBlock: with clause {:?} = {:?}", w.pattern, w.expr);
                     let val_id = self.lower_expr(&w.expr);
                     if let crate::ast::Pattern::Identifier(crate::ast::Ident::Func(n)) = &w.pattern {
-                        eprintln!("DEBUG GuardBlock: inserting {} into env", n);
+                        log::debug!("GuardBlock: inserting {} into env", n);
                         self.env.insert(n.clone(), val_id);
                     }
                 }
-                eprintln!("DEBUG GuardBlock: env keys: {:?}", self.env.keys().collect::<Vec<_>>());
+                log::debug!("GuardBlock: env keys: {:?}", self.env.keys().collect::<Vec<_>>());
 
                 let mut current_otherwise = self.lower_expr(otherwise);
                 
@@ -462,7 +462,7 @@ impl IRBuilder {
                     self.ctx.arena.alloc(IRValue::FuncPtr(full_name))
                 } else {
                     // Para acesso a campo de struct (futuro), precisamos de mais informação
-                    eprintln!("WARNING: FieldAccess em runtime ainda não implementado para {:?}", target);
+                    log::warn!("FieldAccess em runtime ainda não implementado para {:?}", target);
                     self.ctx.arena.alloc(IRValue::FuncPtr(field.clone()))
                 }
             }
