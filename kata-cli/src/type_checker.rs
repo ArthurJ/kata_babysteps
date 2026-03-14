@@ -257,6 +257,18 @@ impl TypeChecker {
                             .or_insert_with(Vec::new)
                             .push(i_name.clone());
 
+                        // Primeiro passo: coletar assinaturas específicas da implementação
+                        let mut impl_signatures: HashMap<String, TypeSignature> = HashMap::new();
+                        for method in methods.iter() {
+                            if let TopLevelDecl::SignatureDecl { name, sig, .. } = method {
+                                let method_name = match name {
+                                    Ident::Func(n) | Ident::Symbol(n) => n.clone(),
+                                    _ => continue,
+                                };
+                                impl_signatures.insert(method_name, sig.clone());
+                            }
+                        }
+
                         for method in methods {
                             if let TopLevelDecl::Definition { name, expr } = method {
                                 let method_name = match name {
@@ -277,11 +289,27 @@ impl TypeChecker {
                                         }
                                     }
                                     if resolved_to.starts_with("impl_") {
-                                         self.env.functions.insert(resolved_to.clone(), FuncSignature {
+                                        // Busca assinatura específica da implementação primeiro
+                                        let mut args_types = vec![Type::Unknown; branches[0].params.len()];
+                                        let mut return_type = Type::Unknown;
+                                        if let Some(specific_sig) = impl_signatures.get(&method_name) {
+                                            // Usa assinatura específica da implementação
+                                            args_types = specific_sig.args.iter().map(|a| self.ident_to_type(a)).collect();
+                                            return_type = self.ident_to_type(&specific_sig.ret);
+                                            log::debug!("Registrando implementação '{}' com assinatura específica: {:?} -> {:?}", resolved_to, args_types, return_type);
+                                        } else if let Some(iface_methods) = self.env.interfaces.get(i_name) {
+                                            // Fallback para assinatura da interface
+                                            if let Some(sig) = iface_methods.iter().find(|s| s.name == method_name) {
+                                                args_types = sig.args_types.clone();
+                                                return_type = sig.return_type.clone();
+                                                log::debug!("Registrando implementação '{}' com assinatura da interface: {:?}", resolved_to, sig);
+                                            }
+                                        }
+                                        self.env.functions.insert(resolved_to.clone(), FuncSignature {
                                             name: resolved_to.clone(),
                                             arity: branches[0].params.len(),
-                                            args_types: vec![Type::Unknown; branches[0].params.len()],
-                                            return_type: Type::Unknown,
+                                            args_types,
+                                            return_type,
                                             is_action: false,
                                             ffi_binding: None,
                                         });
@@ -899,6 +927,9 @@ impl TypeChecker {
                             let mut ret_ty = Type::Unknown;
                             if let Some(sig) = self.env.get_signature(&resolved_name) {
                                 ret_ty = sig.return_type.clone();
+                                log::debug!("Após resolução: assinatura encontrada para '{}', ret_ty={:?}", resolved_name, ret_ty);
+                            } else {
+                                log::debug!("Após resolução: NENHUMA assinatura para '{}'", resolved_name);
                             }
 
                             let mut final_target_expr = t_expr.clone();
