@@ -1,31 +1,32 @@
 # **Especificação Técnica: Kata-Lang**
 
-
-  ┌─────────────────────────────────────────────────────────────────────┐
-  │                         KATA-LANG ARCHITECTURE                       │
-  ├─────────────────────────────────────────────────────────────────────┤
-  │  FRONTEND (Parsing)          MIDDLE-END (IR)         BACKEND (Code) │
-  │  ─────────────────          ───────────────         ─────────────── │
-  │  ┌───────────┐              ┌───────────┐          ┌─────────────┐ │
-  │  │  Lexer   │  → Tokens →   │   AST    │  → IR →  │  Cranelift  │ │
-  │  │  (logos) │                │  (typed) │          │   (AOT)     │ │
-  │  └───────────┘              └───────────┘          └─────────────┘ │
-  │       ↓                          ↓                        ↓        │
-  │  ┌───────────┐              ┌───────────┐          ┌─────────────┐ │
-  │  │  Parser   │              │   IR     │          │  Object     │ │
-  │  │           │              │  (DAG)   │          │   File      │ │
-  │  └───────────┘              └───────────┘          └─────────────┘ │
-  │                                   ↓                        ↓        │
-  │                            ┌───────────┐          ┌─────────────┐ │
-  │                            │TreeShaker │          │  Linker     │ │
-  │                            │  (Shake)  │          │   (cc)      │ │
-  │                            └───────────┘          └─────────────┘ │
-  │                                   ↓                        ↓        │
-  │                            ┌───────────┐          ┌─────────────┐ │
-  │                            │ TCO Pass  │          │  Runtime    │ │
-  │                            │(Tail Call)│          │  (kata-rt)  │ │
-  │                            └───────────┘          └─────────────┘ │
-  └─────────────────────────────────────────────────────────────────────┘
+```
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │                         KATA-LANG ARCHITECTURE                         │
+  ├────────────────────────────────────────────────────────────────────────┤
+  │  FRONTEND (Parsing)         MIDDLE-END (IR)           BACKEND (Code)   │
+  │  ─────────────────          ───────────────           ───────────────  │
+  │  ┌───────────┐              ┌───────────┐             ┌─────────────┐  │
+  │  │  Lexer    │ → Tokens →   │   AST     │    → IR →   │  Cranelift  │  │
+  │  │  (logos)  │              │  (typed)  │             │   (AOT)     │  │
+  │  └───────────┘              └───────────┘             └─────────────┘  │
+  │       ↓                          ↓                           ↓         │
+  │  ┌───────────┐              ┌───────────┐             ┌─────────────┐  │
+  │  │  Parser   │              │   IR      │             │  Object     │  │
+  │  │ (chumsky) │              │  (DAG)    │             │   File      │  │
+  │  └───────────┘              └───────────┘             └─────────────┘  │
+  │                                   ↓                           ↓        │
+  │                             ┌───────────┐             ┌─────────────┐  │
+  │                             │TreeShaker │             │  Linker     │  │
+  │                             │  (Shake)  │             │   (cc)      │  │
+  │                             └───────────┘             └─────────────┘  │
+  │                                   ↓                           ↓        │
+  │                             ┌───────────┐             ┌─────────────┐  │
+  │                             │ TCO Pass  │             │  Runtime    │  │
+  │                             │(Tail Call)│             │  (kata-rt)  │  │
+  │                             └───────────┘             └─────────────┘  │
+  └────────────────────────────────────────────────────────────────────────┘
+```
 
 ## **Kata-Lang Standard Library (StdLib)**
 
@@ -103,7 +104,7 @@ As *Actions* interagem com o *Runtime* Kata, o Sistema Operacional e orquestram 
 * channel\! :: () \=\> (Sender::T Receiver::T) (Cria um canal síncrono *Rendezvous* bloqueante).  
 * queue\! :: Int \=\> (Sender::T Receiver::T) (Cria um canal assíncrono com buffer de tamanho fixo).  
 * broadcast\! :: () \=\> (Sender::T Subscribe::Function) (Cria canal 1-para-N. O recetor invoca a função *Subscribe* para obter a sua fila).  
-* \>\! :: Sender::T T \=\> () (Operador direcional de envio. Transfere a propriedade do dado para o canal).  
+* \!\> :: Sender::T T \=\> () (Operador direcional de envio. Transfere a propriedade do dado para o canal).  
 * \<\! :: Receiver::T \=\> T (Operador direcional de receção. Bloqueia a *Green Thread* até os dados estarem disponíveis).  
 * \<\!? :: Receiver::T \=\> Optional::T (Tentativa não-bloqueante de leitura de canal).  
 * select\! :: (Estrutura de bloco multiplexadora para aguardar em múltiplos canais simultaneamente).  
@@ -237,10 +238,11 @@ Para realizar aplicação parcial de uma função em escopo livre (sem uso de pa
 
 #### **3.3 Actions (Marcador Imperativo e Variadismo)**
 
-* **Regra:** Todas as chamadas a Actions devem ser explicitamente sufixadas com um ponto de exclamação \! (ex: echo\!, channel\!). Ao contrário das funções, as Actions podem ser variádicas, com a sintaxe (A…, B…), onde o primeiro item representa n-valores do tipo A, o segundo m-valores do tipo B .  
-* **Mecânica do Parser:** O Lexer reconhece o \! como o marcador imperativo. Para evitar a quebra da leitura da notação prefixa, uma chamada variádica numa Action exige o encapsulamento de todos os argumentos dentro de parênteses (formando uma tupla léxica única).  
-  * *Válido:* echo\! ("Erro no processamento" id\_utilizador data)  
-  * *Inválido:* echo\! "Erro no processamento" id\_utilizador data (O parser aplicaria echo\! apenas à primeira string, tratando o resto como instruções desconexas).
+* **Regra:** Todas as chamadas a Actions devem ser explicitamente sufixadas com um ponto de exclamação \! (ex: echo\!, channel\!). Ao contrário das funções, as Actions podem ser variádicas.
+* **Mecânica do Parser:** Actions seguem a mesma regra de aplicação greedy que funções. Argumentos são separados por espaços, sem necessidade de parênteses.
+  * *Válido:* echo\! "Erro no processamento" id\_utilizador data
+  * *Válido:* echo\! $(fizzbuzz 3) *(aplicação explícita com $)*
+  * *Nota:* Parênteses criam tuplas. Use `$` para aplicar expressões como argumentos.
 
 ### **4\. Strings e Templates (Dados Cegos)**
 
@@ -252,24 +254,27 @@ O Lexer da Kata-Lang não realiza interpretação de código embutido dentro de 
 
 ### **5\. A Teoria Unificada das Tuplas e Parênteses**
 
-A Kata-Lang não distingue sintaticamente entre "agrupamento matemático", "lista de parâmetros" e "estrutura de dados Tupla". O token (...) cria invariavelmente um nó Tuple na AST. A semântica é resolvida no Type Checker através das seguintes regras:
+A Kata-Lang adota uma distinção sintática clara entre tuplas e aplicação de funções. O token (...) cria invariavelmente um nó Tuple na AST. A aplicação de função ocorre de duas formas: **greedy** (sem parênteses) ou **explícita** com o operador `$`.
 
 #### **5.1 Delimitadores Internos**
 
 Dentro de parênteses, os itens podem ser separados por espaços ou vírgulas. Para o parser, são tokens equivalentes. (1 2 3\) produz a mesma AST que (1, 2, 3\).
 
-#### **5.2 Avaliação Semântica da Tupla**
+#### **5.2 Regras de Avaliação**
 
-Ao avaliar um nó Tuple, o *Type Checker* inspeciona o primeiro elemento (Índice 0):
-
-1. **Aplicação de Função:** Se o Índice 0 for invocável, a tupla é transformada num nó de Aplicação (Call).  
-   * *Entrada:* (+ 1 1\) \-\> *AST:* Application(+, Args:\[1, 1\])  
-2. **Redução de Unidade:** Uma tupla contendo apenas um elemento não-invocável resolve-se para o próprio elemento. Se for uma função não aplicada, resolve-se para a referência da função (Lambda).  
-   * *Entrada:* (42) \-\> *AST:* Literal(42)  
-   * *Entrada:* (+) \-\> *AST:* Lambda(+, Arity: 2\)  
-3. **Currying Implícito:** Se uma função for invocada dentro da tupla com menos argumentos que a sua aridade estrita, o compilador infere o *currying* automaticamente, dispensando o operador *Hole*. Os delimitadores (...) justificam o corte léxico prematuro.  
-   * *Entrada:* (+ 1\) \-\> *AST:* Lambda(Closure:\[1\], Arity: 1\)  
-4. **Dados Literais:** Se o Índice 0 for um dado não-invocável e a tupla tiver múltiplos elementos, ela permanece como uma estrutura Tuple literal.  
+1. **Aplicação Greedy (sem parênteses):** Uma função seguida de argumentos sem parênteses é aplicada automaticamente.
+   * *Entrada:* + 1 2 \-\> *AST:* Application(+, Args:\[1, 2\])
+   * *Entrada:* fib $(- n 1) fib $(- n 2) \-\> *AST:* Application(fib, Args:\[$(- n 1), fib, $(- n 2)\])
+2. **Tuplas (com parênteses, sem $):** Parênteses sempre criam tuplas, nunca invocam funções.
+   * *Entrada:* (+ 1 2\) \-\> *AST:* Tuple(\[+, 1, 2\]) *(tupla de 3 elementos)*
+3. **Aplicação Explícita com $:** O operador `$` força a avaliação do conteúdo entre parênteses como aplicação.
+   * *Entrada:* $(+ 1 2\) \-\> *AST:* Application(+, Args:\[1, 2\])
+   * *Entrada:* $(fib 40\) \-\> *AST:* Application(fib, Args:\[40\])
+4. **Redução de Unidade:** Uma tupla contendo apenas um elemento resolve-se para o próprio elemento.
+   * *Entrada:* (42) \-\> *AST:* Literal(42)
+5. **Currying Explícito com Hole:** Para criar uma função parcialmente aplicada, usa-se o operador *Hole* (\_).
+   * *Entrada:* $(+ 1 \_) \-\> *AST:* Lambda(Closure:\[1\], Arity: 1\)
+6. **Dados Literais:** Qualquer agrupamento entre parênteses sem o operador `$` é uma tupla literal.
    * *Entrada:* (1 "Teste") \-\> *AST:* Tuple(\[1, "Teste"\])
 
 #### **5.3 Tuplas Implícitas em Assinaturas e Tipos de Funções**
@@ -415,18 +420,18 @@ Para manter a pureza da Mônada Funcional, a construção imperativa match é **
 
 #### **Exemplo: Sobrecarga Pura com Resolução de Result**
 
-Vec2 implements ADD\_BEHAVIOR    
-    \# Prometemos que a saída será sempre PositiveInt (sem Result)    
-    \+ :: PositiveInt Int \=\> PositiveInt    
-    lambda (p i)    
-        \# 1\. A soma (+ p i) degrada para Int.    
-        \# 2\. O construtor 'PositiveInt' reavalia e retorna Result.    
-        \# 3\. O Pipe despacha para os lambdas de resolução de padrão.    
-        PositiveInt (+ p i) |\> (    
-            lambda (Ok valor\_puro) valor\_puro     \# Ramo de Sucesso    
-            lambda (Err erro) 1                   \# Ramo de Falha    
-        ) \_    
-    \# O fallback deve respeitar o tipo de retorno.    
+Vec2 implements ADD\_BEHAVIOR
+    \# Prometemos que a saída será sempre PositiveInt (sem Result)
+    \+ :: PositiveInt Int \=\> PositiveInt
+    lambda (p i)
+        \# 1\. A soma $(- p i) degrada para Int.
+        \# 2\. O construtor 'PositiveInt' reavalia e retorna Result.
+        \# 3\. O Pipe despacha para os lambdas de resolução de padrão.
+        PositiveInt $(+ p i) |\> (
+            lambda (Ok valor\_puro) valor\_puro     \# Ramo de Sucesso
+            lambda (Err erro) 1                   \# Ramo de Falha
+        ) \_
+    \# O fallback deve respeitar o tipo de retorno.
     \# '1' é aceito estaticamente pelo compilador como PositiveInt.  
 
 Se o programador não quiser fornecer um fallback (como no caso acima), a linguagem obriga a alterar a assinatura principal da função para propagar o Result, delegando o tratamento imperativo da falha (como emissão de panic\!) para as Actions.
@@ -446,29 +451,35 @@ O controlo de fluxo primário é feito pela assinatura do lambda. Uma função p
 fibonacci :: Int \=\> Int    
 lambda (0) 0             \# Match exato literal    
 lambda (1) 1    
-lambda (n) \+ (fibonacci (- n 1)) (fibonacci (- n 2))
+lambda (n) \+ fibonacci $(- n 1) fibonacci $(- n 2)
 
 #### **1.2. Desestruturação e Omissão de Valores em Lambdas**
 
 O *Pattern Matching* também atua como mecanismo primário de desestruturação de tuplos e estruturas nos argumentos. Não existem "Holes indexados" (como \_:2) na linguagem; para extrair ou ignorar valores específicos de coleções aninhadas durante um pipeline, utiliza-se a desestruturação posicional no cabeçalho do lambda, omitindo a variável indesejada no corpo:
 
-\# Somando apenas o 1º, 2º e 4º elementos de tuplos de tamanho 4  
-let resultados (lista\_tuplos |\> map (lambda ((a b c d)) sum a b d) \_)
+\# Somando apenas o 1º, 2º e 4º elementos de tuplos de tamanho 4
+let resultados $(lista\_tuplos |\> map (lambda ((a b c d)) sum a b d) \_)
 
 *(O compilador identifica que c não é utilizado e o elimina estaticamente como código morto na otimização da Representação Intermediária).*
 
 #### **1.3. Guards (Condicionais Puras) e otherwise**
 
-Para desvios lógicos que não podem ser resolvidos por *Pattern Matching* estrutural, utilizam-se os *Guards*. Eles substituem as cadeias de if/else, operando como testes booleanos sucessivos (avaliados de cima para baixo). O sufixo : separa a condição do resultado.
+Para desvios lógicos que não podem ser resolvidos por *Pattern Matching* estrutural, utilizam-se os *Guards*. Eles substituem as cadeias de if/else, operando como testes booleanos sucessivos (avaliados de cima para baixo). O sufixo `:` separa o identificador do resultado.
 
 A linguagem requer o uso explícito da cláusula **otherwise** como *fallback* mandatário caso as condições acima não sejam satisfeitas, garantindo que o ramo não fique pendente.
 
+**Sintaxe com Bloco `with`:** Os Guards em Kata-Lang utilizam um bloco `with` para definir as condições de forma nomeada. Esta abordagem permite avaliação lazy das condições e melhor legibilidade. Cada condição é definida com a sintaxe `identificador: resultado`, e o bloco `with` declara as expressões condicionais.
+
 **Curto-Circuito Garantido:** O compilador assegura que a avaliação dos *Guards* obedece a um comportamento de curto-circuito (*Short-Circuit*). Isto significa que o processamento do bloco falso é omitido no *runtime*, protegendo a execução de potenciais avaliações que causariam *panic\!*.
 
-max :: Int Int \=\> Int    
-lambda (x y)    
-    \> x y: x    
+max :: Int Int \=\> Int
+lambda (x y)
+    maior: x
+    menor: y
     otherwise: y
+    with
+        maior as > x y
+        menor as < x y
 
 #### **1.4. O Escopo Local: let vs with**
 
@@ -507,8 +518,8 @@ As *Actions* operam sobre um escalonador de *Green Threads* em tempo de execuç�
 
 Para substituir a recursão em operações de I/O, as *Actions* utilizam primitivas iterativas clássicas com as chaves de controlo break (interrompe o laço) e continue (avança a iteração).
 
-* **loop**: Um laço infinito fundamental.  
-* **for elemento colecao**: Um iterador seguro que consome estruturas que implementam a interface nativa ITERABLE (Listas, Arrays, Ranges). A sintaxe é estritamente posicional, alinhando-se com a declaração de variáveis (let), onde o espaço delimita a variável de captura da fonte de dados.
+* **loop**: Um laço infinito fundamental.
+* **for elemento in colecao**: Um iterador seguro que consome estruturas que implementam a interface nativa ITERABLE (Listas, Arrays, Ranges). A sintaxe utiliza a palavra-chave `in` para separar a variável de iteração da coleção, mantendo clareza semântica.
 
 Abaixo, um exemplo da utilização do loop coordenando estado mutável (var), saltos de iteração (continue) e condição de saída (break):
 
@@ -526,7 +537,7 @@ action conectar\_servidor
             False:    
                 () \# Continua a execução normalmente    
             
-        let pronto (ping\!)    
+        let pronto ping\!    
             
         match pronto    
             False:    
@@ -539,31 +550,32 @@ action conectar\_servidor
 
 #### **2.3. Desestruturação Exaustiva (match) A palavra-chave if não existe na linguagem Kata. O desvio condicional dentro do mundo imperativo é centralizado no bloco match. O match é obrigatório para lidar com Tipos de Soma (como Result::T::E e Optional::T), e deve ser estritamente exaustivo. O compilador recusará qualquer programa que não cubra todas as variantes possíveis da estrutura, a menos que a cláusula de fallback otherwise: seja fornecida.**
 
-action ler\_banco (id\_utilizador)    
-    let resposta (db\_query\! id\_utilizador)    
-        
-    match resposta    
-        \# Extração de valores em caso de sucesso    
-        Ok dados: echo\! "Nome: \#{dados.nome}"    
-            
-        \# O compilador força o tratamento do 'Err', prevenindo crashes silenciosos    
-        Err falha:     
-            log\! "Falha no banco: \#{falha}"    
+action ler\_banco (id\_utilizador)
+    let resposta db\_query\! id\_utilizador
+
+    match resposta
+        \# Extração de valores em caso de sucesso
+        Ok dados: echo\! format "Nome: {}" dados.nome
+
+        \# O compilador força o tratamento do 'Err', prevenindo crashes silenciosos
+        Err falha:
+            log\! format "Falha no banco: {}" falha
             panic\! "Abortando ação."
 
 #### **2.4. Propagação de Erros (Operador ?)**
 
-A ausência de um retorno antecipado converte operações falíveis encadeadas numa pirâmide de aninhamento inaceitável. O operador de prefixo ? atua como açúcar sintático para desestruturação monádica e retorno de escopo em *Actions*.
+A ausência de um retorno antecipado converte operações falíveis encadeadas numa pirâmide de aninhamento inaceitável. O operador **pós-fixado** `?` atua como açúcar sintático para desestruturação monádica e retorno de escopo em *Actions*.
 
-* **Mecânica:** Ao encontrar o operador ?, o compilador injeta invisivelmente um bloco match. Em caso de Ok(v) ou Some(v), desempacota o valor. Em caso de Err(e) ou None, aborta a *Action* atual e retorna o erro imediatamente para o chamador.  
+* **Mecânica:** Ao encontrar o operador `?` pós-fixado a uma expressão, o compilador injeta invisivelmente um bloco match. Em caso de Ok(v) ou Some(v), desempacota o valor. Em caso de Err(e) ou None, aborta a *Action* atual e retorna o erro imediatamente para o chamador.
+* **Sintaxe:** O `?` é posicionado **após** a expressão ou aplicação, não antes.
 * **Restrição Arquitetural:** O Type Checker exige que a assinatura de retorno da *Action* envolvente seja compatível com a falha propagada (deve retornar Result ou Optional).
 
-\# O '?' intercepta o Result mantendo o fluxo estritamente linear  
-action processar\_ficheiro (caminho)  
-    let fd (? abrir\_ficheiro\! caminho)  
-    let dados (? ler\_dados\! fd)  
-    let json (? parse\_json dados)  
-      
+\# O '?' pós-fixado intercepta o Result mantendo o fluxo estritamente linear
+action processar\_ficheiro (caminho)
+    let fd (abrir\_ficheiro\! caminho)?
+    let dados (ler\_dados\! fd)?
+    let json (parse\_json dados)?
+
     Ok json
 
 ## **Sistema de Tipos: Primitivos e Topologia de Coleções**
@@ -611,15 +623,15 @@ A linguagem divide as coleções fundamentadas em três eixos: tipagem (homogén
 #### **2.5. Dicionários Persistentes (Dict)**
 
 * **Assinatura:** Dict::K::V (onde o tipo K deve obrigatoriamente implementar as interfaces HASH e EQ).  
-* **Sintaxe de Construção:** A invocação do próprio tipo como construtor, recebendo uma List de tuplos chave-valor. Duplicatas subescrevem o valor anterior silenciosamente.  
-  let capitais (Dict \[("Brasil" "Brasília") ("Japão" "Tóquio")\])  
+* **Sintaxe de Construção:** A invocação do próprio tipo como construtor, recebendo uma List de tuplos chave-valor. Duplicatas subescrevem o valor anterior silenciosamente.
+  let capitais Dict \[("Brasil" "Brasília") ("Japão" "Tóquio")\]  
 * **Comportamento:** Estruturas de mapeamento não-ordenadas e imutáveis baseadas em árvores de partilha estrutural (HAMT). O método insert devolve um novo dicionário fundido, e o método get obriga o retorno sob um Optional para segurança espacial.
 
 #### **2.6. Conjuntos (Set)**
 
 * **Assinatura:** Set::T (onde o tipo T implementa HASH e EQ).  
-* **Sintaxe de Construção:** A invocação do tipo como construtor recebendo uma List.  
-  let permitidos (Set \[80 443 8080\])  
+* **Sintaxe de Construção:** A invocação do tipo como construtor recebendo uma List.
+  let permitidos Set \[80 443 8080\]  
 * **Comportamento:** Coleção imutável que garante a singularidade matemática dos seus elementos. Otimizada para operações de álgebra relacional fornecidas nativamente pela *StdLib* (union, intersect, diff).
 
 #### **2.7. Intervalos Geradores (Ranges)**
@@ -650,9 +662,9 @@ data Vetor2D (x::Float y::Float)
 \# Produto genérico    
 data Caixa::T (conteudo::T peso::Int)    
     
-action processar\_vetor    
-    let v (Vetor2D 10.5 20.0)    
-    echo\! "Eixo X: \#{v.x}"
+action processar\_vetor
+    let v Vetor2D 10.5 20.0
+    echo\! format "Eixo X: {}" v.x
 
 *(Nota: Tuplos (A B) são, na sua essência, Tipos Produto anónimos sem chaves nomeadas).*
 
@@ -660,18 +672,18 @@ action processar\_vetor
 
 Representam a disjunção lógica (OR). Uma instância de um Tipo Soma ocupa o tamanho em memória da sua maior variante, mais uma *tag* de identificação discriminatória (Discriminant Tag). O compilador garante a segurança de acesso obrigando o uso de *Pattern Matching* em Functions ou match em Actions.
 
-* **Sintaxe:** Declarados com a palavra-chave enum. As variantes são separadas pelo operador |. Podem ser unitárias (sem carga de dados) ou carregar tipos associados. O uso de múltiplas linhas é encorajado para clareza visual.
+* **Sintaxe:** Declarados com a palavra-chave enum. As variantes são separadas pelo operador |. Podem ser unitárias (sem carga de dados) ou carregar tipos associados entre parênteses. O uso de múltiplas linhas é encorajado para clareza visual.
 
-\# Soma: Uma Transação é Aprovada, OU Recusada (com um motivo), OU Pendente  
-enum Transacao  
-    Aprovada   
-    | Recusada::Text   
+\# Soma: Uma Transação é Aprovada, OU Recusada (com um motivo), OU Pendente
+enum Transacao
+    | Aprovada
+    | Recusada(Text)
     | Pendente
 
-action verificar\_pagamento (t::Transacao)  
-    match t  
-        Aprovada: echo\! "Sucesso"  
-        Recusada motivo: echo\! "Falha: \#{motivo}"  
+action verificar\_pagamento (t::Transacao)
+    match t
+        Aprovada: echo\! "Sucesso"
+        Recusada motivo: echo\! format "Falha: {}" motivo
         Pendente: echo\! "Aguardando processamento"
 
 ### **3.3. Tipos Soma Fundamentais (Standard Library)**
@@ -684,11 +696,15 @@ enum Bool (True | False)
 
 #### **3.3.2. Optional::T (Ausência Segura de Valor) A linguagem não possui o conceito de null ou nil (o "erro de mil milhões de dólares"). A ausência de valor é semanticamente explícita no sistema de tipos através do Optional. Funções que podem não encontrar um resultado (como a busca numa lista) devem retornar este tipo.**
 
-enum Optional::T (Some::T | None)
+enum Optional::T
+    | Some(T)
+    | None
 
 #### **3.3.3. Result::T::E (Tratamento de Falhas) Não existe mecanismo de lançamento de exceções (try/catch) na linguagem (exceções invisíveis quebram a pureza funcional). Operações passíveis de falha (I/O, conversões dinâmicas de tipos, divisão por zero em tempo de execução) retornam o tipo Result. O programador é forçado a lidar estaticamente com o cenário de sucesso (Ok) e o de falha (Err).**
 
-enum Result::T::E (Ok::T | Err::E)
+enum Result::T::E
+    | Ok(T)
+    | Err(E)
 
 ### **Fronteira Dinâmica para Estática (Cast Seguro)**
 
@@ -714,19 +730,16 @@ lambda (x y) \+ x y
     
 export soma
 
-* **Importação e Namespaces:** A linguagem suporta três mecânicas estritas de importação para evitar colisões de identificadores:  
-  * **Importação por Namespace:** Ao importar um módulo inteiro (import biblioteca), todos os identificadores exportados ficam confinados ao *namespace* do próprio módulo, sendo acedidos via notação de ponto (ex: biblioteca.funcao).  
-  * **Importação com Alias:** Para resolução explícita de nomes extensos, utiliza-se a palavra as (import Modulo\_Extenso as M). O acesso passa a ser feito unicamente através de M.funcao.  
+* **Importação e Namespaces:** A linguagem suporta duas mecânicas estritas de importação para evitar colisões de identificadores:
+  * **Importação por Namespace:** Ao importar um módulo inteiro (import biblioteca), todos os identificadores exportados ficam confinados ao *namespace* do próprio módulo, sendo acedidos via notação de ponto (ex: biblioteca.funcao).
   * **Importação Unitária:** Para importar um único identificador diretamente para o escopo léxico atual, utiliza-se a notação de ponto na própria diretiva (import biblioteca.Item).
 
-import sistema\_ficheiros              \# Importa o namespace completo  
-import sistema\_rede as Rede           \# Importação com alias explícito  
-import modulo\_matematico.soma         \# Importação unitária
+import sistema_ficheiros              # Importa o namespace completo
+import modulo_matematico.soma         # Importação unitária
 
-action principal  
-    let fd (sistema\_ficheiros.abrir\! "config.txt")   
-    let ping (Rede.ping\!)  
-    let calc (soma 10 20\)                         
+action principal
+    let fd sistema_ficheiros.abrir\! "config.txt"
+    let calc soma 10 20                         
 
 ### **2\. Declaração de Contratos (implements)**
 
@@ -738,12 +751,12 @@ data Vec2 (x y)
 
 \# A implementação é feita no topo do escopo. Não requer a palavra 'export'.    
 \# Se 'Vec2' for exportado, este contrato viaja com ele automaticamente.    
-Vec2 implements NUM    
-    \+ :: Vec2 Vec2 \=\> Vec2    
-    lambda (a b) Vec2 (+ a.x b.x) (+ a.y b.y)    
-        
-    \- :: Vec2 Vec2 \=\> Vec2    
-    lambda (a b) Vec2 (- a.x b.x) (- a.y b.y)
+Vec2 implements NUM
+    \+ :: Vec2 Vec2 \=\> Vec2
+    lambda (a b) Vec2 $(+ a.x b.x) $(+ a.y b.y)
+
+    \- :: Vec2 Vec2 \=\> Vec2
+    lambda (a b) Vec2 $(- a.x b.x) $(- a.y b.y)
 
 ### **3\. A Regra de Coerência (Orphan Rule)**
 
@@ -777,8 +790,8 @@ A Kata-Lang implementa concorrência exclusivamente no domínio das **Actions**.
 
 A primitiva fork\! aceita a invocação de uma Action e submete-a ao escalonador do *runtime*. Por predefinição, a execução ocorre numa *Green Thread* cooperativa (M:N).
 
-action worker (id)    
-    echo\! "Worker \#{id} a iniciar"
+action worker (id)
+    echo\! format "Worker {} a iniciar" id
 
 action main    
     \# Inicia a execução concorrente e liberta a thread atual imediatamente    
@@ -792,14 +805,14 @@ Os canais são o único meio de comunicação inter-processos. São unidireciona
 
 Síncrono e sem *buffer*. A transferência de dados exige que o emissor e o recetor estejam prontos simultaneamente.
 
-* O operador de envio \>\! bloqueia até que uma *Action* execute uma receção \<\!.  
-* O operador de receção \<\! bloqueia até que uma *Action* execute um envio \>\!.
+* O operador de envio \!\> bloqueia até que uma *Action* execute uma receção \<\!.
+* O operador de receção \<\! bloqueia até que uma *Action* execute um envio \!\>.
 
 let (tx rx) channel\!()
 
 #### **2.2. Fila Assíncrona (queue\!) Possui um *buffer* de tamanho fixo em memória. Funciona como mecanismo primário de *backpressure* (contrapressão) para ritmos desiguais de I/O.**
 
-* O envio \>\! bloqueia a *Action* emissora caso o *buffer* atinja o seu limite, forçando-a a aguardar (travada) até que um recetor consuma pelo menos um item e liberte espaço na fila.  
+* O envio \!\> bloqueia a *Action* emissora caso o *buffer* atinja o seu limite, forçando-a a aguardar (travada) até que um recetor consuma pelo menos um item e liberte espaço na fila.
 * A receção \<\! bloqueia a *Action* recetora apenas se o *buffer* estiver completamente vazio.
 
 let (tx rx) queue\!(16) \# Fila com capacidade máxima para 16 elementos
@@ -808,7 +821,7 @@ let (tx rx) queue\!(16) \# Fila com capacidade máxima para 16 elementos
 
 * A criação devolve um emissor (tx) e uma **fábrica de recetores** (subscribe).  
 * **Sem retroatividade (*No Replay*):** Quando um novo recetor é inscrito através de subscribe, ele não tem acesso ao histórico de mensagens passado. Receberá estritamente as mensagens publicadas após o momento exato da sua inscrição.  
-* O envio \>\! **nunca** bloqueia o emissor. Se um recetor específico estiver demasiado atrasado a ponto de encher o seu *buffer* local associado à subscrição, as mensagens mais antigas desse recetor são descartadas silenciosamente (*Drop-Oldest*), garantindo que o publicador nunca é penalizado por subscritores lentos.
+* O envio \!\> **nunca** bloqueia o emissor. Se um recetor específico estiver demasiado atrasado a ponto de encher o seu *buffer* local associado à subscrição, as mensagens mais antigas desse recetor são descartadas silenciosamente (*Drop-Oldest*), garantindo que o publicador nunca é penalizado por subscritores lentos.
 
 let (tx subscribe) broadcast\!()    
 let rx\_cliente\_1 subscribe(4) \# Subscreve com um buffer local de 4    
@@ -818,43 +831,43 @@ let rx\_cliente\_2 subscribe(8) \# Receberá apenas os envios feitos a partir de
 
 A interação com os canais utiliza a notação prefixada e os operadores direcionais de I/O.
 
-* \>\! tx valor: Transfere a propriedade do valor para o canal.  
-* \<\! rx: Extrai o próximo valor disponível do canal de forma bloqueante.  
+* \!\> tx valor: Transfere a propriedade do valor para o canal.
+* \<\! rx: Extrai o próximo valor disponível do canal de forma bloqueante.
 * \<\!? rx: Tentativa de extração não-bloqueante. Se não houver dados disponíveis imediatamente, não bloqueia a *Action* e retorna None. Caso contrário, retorna Some valor. (Equivalente a um try\_recv).
 
-action produtor (tx)    
-    \>\! tx "Dados críticos"    
-    
-action consumidor (rx)    
-    let dados (\<\! rx)    
+action produtor (tx)
+    valor \!\> tx
+
+action consumidor (rx)
+    let dados (\<\! rx)
     echo\! dados
 
-action consumidor\_nao\_bloqueante (rx)  
-    match (\<\!? rx)  
-        Some dados: echo\! "Recebido agora: \#{dados}"  
+action consumidor\_nao\_bloqueante (rx)
+    match (\<\!? rx)
+        Some dados: echo\! format "Recebido agora: {}" dados
         None: echo\! "Nenhum dado disponível no canal. Continuando..."
 
 ### **4\. Multiplexagem Não-Determinística (select\!)**
 
 O select\! é a estrutura de controlo imperativa para aguardar múltiplos eventos assíncronos. Avalia todas as operações de canal declaradas nos seus ramos (case) e bloqueia a *Action* até que **um** dos eventos esteja pronto. Se múltiplos canais estiverem prontos em simultâneo, o escalonador escolhe um ramo de forma pseudoaleatória para garantir justiça (*fairness*) e evitar a inanição (*starvation*) de canais secundários.
 
-action multiplexador (rx\_a rx\_b tx\_c)    
-    loop    
-        select\!    
-            \# Ramo de receção    
-            case (\<\! rx\_a) \-\> valor\_a:    
-                echo\! "Recebido de A: \#{valor\_a}"    
-                
-            \# Ramo de receção alternativo    
-            case (\<\! rx\_b) \-\> valor\_b:    
-                echo\! "Recebido de B: \#{valor\_b}"    
-                
-            \# Ramo de emissão (só executa se tx\_c tiver espaço no buffer)    
-            case (\>\! tx\_c "Ping"):    
-                echo\! "Sinal enviado para C"    
-                
-            \# Desbloqueio temporal    
-            timeout\! 1000:    
+action multiplexador (rx\_a rx\_b tx\_c)
+    loop
+        select\!
+            \# Ramo de receção
+            case (\<\! rx\_a) -> valor\_a:
+                echo\! format "Recebido de A: {}" valor\_a
+
+            \# Ramo de receção alternativo
+            case (\<\! rx\_b) -> valor\_b:
+                echo\! format "Recebido de B: {}" valor\_b
+
+            \# Ramo de emissão (só executa se tx\_c tiver espaço no buffer)
+            case ("Ping" \!\> tx\_c):
+                echo\! "Sinal enviado para C"
+
+            \# Desbloqueio temporal
+            timeout\! 1000:
                 echo\! "Inatividade detetada. 1s passado."
 
 ## **Diretivas de Compilação e Runtime**
@@ -878,7 +891,7 @@ Por predefinição, a invocação de fork\! submete uma *Action* ao escalonador 
 @parallel    
 action processar\_video (rx\_frames tx\_resultado)    
     \# Executa num processo nativo isolado pelo S.O.    
-    let frame (recv\! rx\_frames)    
+    let frame recv\! rx\_frames    
     \# ... processamento intensivo ...
 
 ### **3\. Memoização Automática (@cache\_strategy)**
@@ -897,7 +910,7 @@ A diretiva recebe os seus argumentos através de um bloco de chaves { }:
 fibonacci :: Int \=\> Int    
 lambda (0) 0    
 lambda (1) 1    
-lambda (n) \+ (fibonacci (- n 1)) (fibonacci (- n 2))
+lambda (n) \+ fibonacci $(- n 1) fibonacci $(- n 2)
 
 ### **4\. Foreign Function Interface (@ffi)**
 
@@ -963,11 +976,11 @@ Tal como o bloco @test, as invocações de assert\! que "vazem" para *Actions* d
 
 @test("Abertura de socket local com credenciais válidas")  
 action test\_socket\_operacional ()  
-    let operacao (abrir\_socket\! 8080\)  
+    let operacao abrir\_socket\! 8080  
       
-    \# Usando o assert\! para encurtar testes lógicos num ambiente impuro  
-    assert\! (\!= operacao None) "O construtor do socket não deveria retornar None"  
-      
-    let socket (unwrap\_or\_panic\! operacao "Falha na desestruturação")  
-    assert\! (socket.is\_open) "O socket instanciado não está aberto"
+    \# Usando o assert\! para encurtar testes lógicos num ambiente impuro
+    assert\! $(!= operacao None) "O construtor do socket não deveria retornar None"
+
+    let socket unwrap\_or\_panic\! operacao "Falha na desestruturação"
+    assert\! socket.is\_open "O socket instanciado não está aberto"
 
