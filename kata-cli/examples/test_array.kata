@@ -1,7 +1,7 @@
 # Função pura que processa um array dinâmico
 processar_vendas :: Array::Float => Array::Float
 lambda (vendas)
-    vendas |> map (* 1.1) _ |> filter (> 50.0) _
+    vendas |> map (* 1.1 _) _ |> filter (> _ 50.0) _
 
 action main
     # 1. Criação de um Array (Memória Contígua Dinâmica)
@@ -10,7 +10,7 @@ action main
     
     # 2. Array sendo modificado numa action e recebendo valores dinâmicos
     let vendas_brutas {45.0 100.0 30.5}
-    let vendas_com_imposto (processar_vendas vendas_brutas)
+    let vendas_com_imposto $(processar_vendas vendas_brutas)
     
     echo! "Array Original Processado"
 

@@ -13,7 +13,7 @@ lambda (x y)
         menor as < x y
 
 action main
-    let m (max 10 20)
-    echo! (str m)
+    let m $(max 10 20)
+    echo! $(str m)
 
 main!

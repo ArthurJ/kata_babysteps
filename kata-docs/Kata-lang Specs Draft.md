@@ -8,7 +8,7 @@
   │  ─────────────────          ───────────────           ───────────────  │
   │  ┌───────────┐              ┌───────────┐             ┌─────────────┐  │
   │  │  Lexer    │ → Tokens →   │   AST     │    → IR →   │  Cranelift  │  │
-  │  │  (logos)  │              │  (typed)  │             │   (AOT)     │  │
+  │  │ (chumsky) │              │  (typed)  │             │   (AOT)     │  │
   │  └───────────┘              └───────────┘             └─────────────┘  │
   │       ↓                          ↓                           ↓         │
   │  ┌───────────┐              ┌───────────┐             ┌─────────────┐  │
@@ -685,6 +685,115 @@ action verificar\_pagamento (t::Transacao)
         Aprovada: echo\! "Sucesso"
         Recusada motivo: echo\! format "Falha: {}" motivo
         Pendente: echo\! "Aguardando processamento"
+
+#### **3.2.1. Variantes com Predicados e Valores Fixos**
+
+As variantes de um enum podem carregar valores com restrições adicionais, estendendo o conceito de Tipos-Refinados para o domínio dos Tipos Soma.
+
+##### **Formas de Variante**
+
+| Variante | Sintaxe | Significado |
+|----------|---------|-------------|
+| Unitária | `Nome` | Sem dados |
+| Com tipo | `Nome(Tipo)` | Carrega qualquer valor do tipo |
+| Com valor fixo | `Nome(valor)` | Carrega valor literal (tipo inferido do valor) |
+| Com predicado | `Nome(pred)` | Carrega valor que satisfaz predicado (tipo inferido) |
+| Default | `Nome` ou `Nome(Tipo)` | Última variante, sem predicado |
+
+##### **Variantes com Valores Fixos**
+
+Uma variante pode carregar um valor literal específico, útil para constantes nomeadas:
+
+\# Códigos HTTP como variantes
+enum StatusHTTP
+    | OK(200)
+    | Created(201)
+    | BadRequest(400)
+    | NotFound(404)
+    | InternalError(500)
+
+\# Direções cardeais
+enum Direcao
+    | Norte("N")
+    | Sul("S")
+    | Leste("L")
+    | Oeste("O")
+
+##### **Variantes com Predicados**
+
+Uma variante pode restringir os valores que aceita através de um predicado, unificando Tipos Soma com Tipos-Refinados. O predicado segue a mesma sintaxe dos Tipos-Refinados.
+
+\# Classificação de IMC com predicados
+enum IMC
+    | Magreza(< _ 18.5)
+    | Normal(<= _ 25.0)
+    | Sobrepeso(<= _ 30.0)
+    | Obesidade
+
+\# Com valor preservado no default
+enum IMCDetalhado
+    | Magreza(< _ 18.5)
+    | Normal(<= _ 25.0)
+    | Sobrepeso(<= _ 30.0)
+    | Obesidade(Float)     # default preserva o valor
+
+##### **Regras para Variantes Predicadas**
+
+Quando um enum possui variantes predicadas, as seguintes regras obrigatórias aplicam-se:
+
+1. **Obrigatoriedade de Predicados:** Se houver variantes predicadas, TODAS as variantes (exceto a última) DEVEM ter predicados. Não é permitido misturar variantes com e sem predicado no meio da declaração.
+
+2. **Ordem de Resolução:** Os predicados são avaliados de cima para baixo. A primeira variante cujo predicado for satisfeito pelo valor é escolhida.
+
+3. **Variante Default:** A última variante é obrigatoriamente sem predicado e atua como default, aceitando qualquer valor restante. Pode ser unitária (descarta o valor) ou carregar um tipo (preserva o valor).
+
+\# ✅ VÁLIDO: todas as variantes predicadas (exceto a última)
+enum IMC
+    | Magreza(< _ 18.5)
+    | Normal(<= _ 25.0)
+    | Sobrepeso(<= _ 30.0)
+    | Obesidade           # default: unitário
+
+\# ❌ INVÁLIDO: variante sem predicado no meio
+enum IMC_Invalido
+    | Magreza(< _ 18.5)
+    | Normal              # ERRO: predicado esperado
+    | Sobrepeso(<= _ 30.0)
+    | Obesidade
+
+##### **Construtor Inteligente**
+
+Enums com variantes predicadas possuem um construtor inteligente que avalia os predicados automaticamente:
+
+\# O construtor avalia os predicados em ordem
+let resultado IMC(17.0)    # → Magreza(17.0)
+let resultado IMC(22.0)    # → Normal(22.0)
+let resultado IMC(28.0)    # → Sobrepeso(28.0)
+let resultado IMC(35.0)    # → Obesidade
+
+\# Resolução passo a passo para IMC(35.0):
+\# 35.0 < 18.5?    NÃO → próxima variante
+\# 35.0 <= 25.0?   NÃO → próxima variante
+\# 35.0 <= 30.0?   NÃO → próxima variante
+\# Obesidade       → default (sem predicado)
+
+##### **Pattern Matching com Variantes Predicadas**
+
+O pattern matching extrai o valor das variantes de forma usual:
+
+\# Com default unitário (valor descartado)
+match resultado
+    Magreza(v): echo\! format "Abaixo do peso (IMC: {})" v
+    Normal(v): echo\! format "Peso normal (IMC: {})" v
+    Sobrepeso(v): echo\! format "Sobrepeso (IMC: {})" v
+    Obesidade: echo\! "Obesidade (IMC >= 30.0)"
+
+\# Com default preservando valor
+match resultado_detalhado
+    Magreza(v): echo\! format "Abaixo do peso (IMC: {})" v
+    Normal(v): echo\! format "Peso normal (IMC: {})" v
+    Sobrepeso(v): echo\! format "Sobrepeso (IMC: {})" v
+    Obesidade(v): echo\! format "Obesidade (IMC: {})" v
 
 ### **3.3. Tipos Soma Fundamentais (Standard Library)**
 

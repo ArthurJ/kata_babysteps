@@ -6,14 +6,14 @@ lambda (x sx (y:ys))
    passou_limite: True
    otherwise: True # is_prime_aux x sx ys
    with
-       eh_divisor as = 0 (mod x y)
+       eh_divisor as = 0 $(mod x y)
        passou_limite as > y sx
 
 is_prime :: Int => Bool
 lambda (x) is_prime_aux x 0 [2..x]
 
 action main
-    let r (is_prime 7)
-    echo! (str r)
+    let r $(is_prime 7)
+    echo! $(str r)
 
 main!

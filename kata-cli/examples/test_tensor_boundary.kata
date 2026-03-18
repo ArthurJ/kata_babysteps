@@ -10,11 +10,11 @@ action processa_err (motivo)
 
 action main
     let dados_dinamicos ler_banco
-    
+
     # 1. A Coerção de Fronteira (Type Constructor forçando um Shape 2x2)
     # A variável 'tentativa' é do tipo Result::(Tensor::Int::(2 2))::Text
-    let tentativa (Tensor dados_dinamicos)
-    
+    let tentativa Tensor dados_dinamicos
+
     echo! "Tratamento delegado para as funcoes acima"
 
 main!
