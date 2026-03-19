@@ -7,5 +7,3 @@ lambda (n)
 action main
     let f $(fib 40)
     echo! $(str f)
-
-main!

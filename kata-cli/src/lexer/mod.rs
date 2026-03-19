@@ -7,7 +7,7 @@ mod token;
 mod lexer;
 mod error;
 
-pub use token::Token;
+pub use token::{Token, Span, SpannedToken};
 pub use lexer::KataLexer;
 pub use error::LexerError;
 

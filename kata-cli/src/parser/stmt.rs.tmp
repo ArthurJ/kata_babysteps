@@ -1,0 +1,5 @@
+/// Parse a keyword statement
+fn keyword_stmt(keyword_name: &'static str, stmt: Stmt) -> impl Parser<SpannedToken, Stmt, Error = ParserError> + Clone {
+    let stmt = std::rc::Rc::new(stmt);
+    keyword(keyword_name).map(move |_| (*stmt).clone())
+}

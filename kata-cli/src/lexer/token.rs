@@ -7,7 +7,7 @@
 use std::fmt;
 
 /// All tokens in the Kata language
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Token {
     // === Literals ===
     /// Identifier (includes function names, operators like +, -, etc.)
@@ -185,7 +185,7 @@ impl fmt::Display for Token {
 }
 
 /// Span information for a token
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -216,7 +216,7 @@ impl From<Span> for std::ops::Range<usize> {
 }
 
 /// A token with its span in the source
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SpannedToken {
     pub token: Token,
     pub span: Span,
