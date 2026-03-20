@@ -2,19 +2,19 @@
 
 # Pattern simples (x y) - tupla de 2 elementos
 foo :: (Int Int) => Int
-lambda (x y)
+lambda (x y):
     + x y
 
 # Pattern aninhado (x (y z)) - tupla onde segundo elemento é outra tupla
 bar :: (Int (Int Int)) => Int
-lambda (x (y z))
+lambda (x (y z)):
     + x $(+ y z)
 
 # Pattern cons simples (x:xs)
 sum_list :: List::Int => Int
-lambda []
+lambda []:
     0
-lambda (x:xs)
+lambda x:xs:
     + x sum_list xs
 
 action main

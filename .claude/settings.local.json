@@ -44,7 +44,20 @@
       "Bash(grep:*)",
       "Bash(ls:*)",
       "Bash(xxd:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(cargo clean:*)",
+      "Bash(rustfmt --check src/parser/expr.rs)",
+      "Bash(RUST_MIN_STACK=8388608 cargo test \"parser::decl::tests::test_empty_module\" 2>&1)",
+      "Bash(cargo tree:*)",
+      "Bash(cargo doc:*)",
+      "WebSearch",
+      "Bash(env)",
+      "Bash(/usr/bin/cargo check:*)",
+      "Bash(env -i PATH=\"$PATH\" HOME=\"$HOME\" cargo check)",
+      "Bash(echo \"RUSTFLAGS=$RUSTFLAGS\")",
+      "Bash(echo \"CARGO_BUILD_RUSTFLAGS=$CARGO_BUILD_RUSTFLAGS\")",
+      "Bash(cargo --version)",
+      "Bash(rustc --version)"
     ]
   }
 }

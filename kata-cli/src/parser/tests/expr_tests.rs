@@ -25,7 +25,7 @@ fn test_literal_int() {
 fn test_var() {
     let result = parse_expr("x");
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), Expr::Var(Ident::new("x")));
+    assert_eq!(result.unwrap(), Expr::Var { name: Ident::new("x"), type_ascription: None });
 }
 
 #[test]
@@ -54,7 +54,7 @@ fn test_apply() {
     let expr = result.unwrap();
     match expr {
         Expr::Apply { func, args } => {
-            assert!(matches!(*func, Expr::Var(ref v) if v.0 == "+"), "Expected func to be Var(+), got: {:?}", func);
+            assert!(matches!(*func, Expr::Var { name: ref v, type_ascription: _ } if v.0 == "+"), "Expected func to be Var(+), got: {:?}", func);
             assert_eq!(args.len(), 2, "Expected 2 args, got: {:?}", args);
         }
         _ => panic!("Expected apply, got: {:?}", expr),
@@ -68,8 +68,8 @@ fn test_pipeline() {
     let expr = result.unwrap();
     match expr {
         Expr::Pipeline { value, func } => {
-            assert!(matches!(*value, Expr::Var(ref v) if v.0 == "x"));
-            assert!(matches!(*func, Expr::Var(ref v) if v.0 == "f"));
+            assert!(matches!(*value, Expr::Var { name: ref v, type_ascription: _ } if v.0 == "x"));
+            assert!(matches!(*func, Expr::Var { name: ref v, type_ascription: _ } if v.0 == "f"));
         }
         _ => panic!("Expected pipeline"),
     }
@@ -93,7 +93,7 @@ fn test_explicit_apply() {
     let expr = result.unwrap();
     match expr {
         Expr::ExplicitApply { func, args } => {
-            assert!(matches!(*func, Expr::Var(ref v) if v.0 == "+"));
+            assert!(matches!(*func, Expr::Var { name: ref v, type_ascription: _ } if v.0 == "+"));
             assert_eq!(args.len(), 2);
         }
         _ => panic!("Expected explicit apply"),

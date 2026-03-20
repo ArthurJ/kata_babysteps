@@ -15,22 +15,22 @@ enum Bool
     | False
 
 and :: Bool Bool => Bool
-λ (True True): True
+λ True True: True
 otherwise: False
 
 or :: Bool Bool => Bool
-λ (True _): True
-λ (_ True): True
+λ True _: True
+λ _ True: True
 otherwise: False
 
 xor :: Bool Bool => Bool
-λ (True False): True
-λ (False True): True
+λ True False: True
+λ False True: True
 otherwise: False
 
 not :: Bool => Bool
-λ (False): True
-λ (True): False
+λ False: True
+λ True: False
 
 # ==========================================
 # Interfaces
@@ -48,7 +48,7 @@ interface EQ implements HASH
     
     @comutative
     != :: A A => Bool
-    λ (x y): not $(= (x y))
+    λ x y: not $(= x y)
 
 interface ORD implements EQ
     >  :: A A => Bool
@@ -130,7 +130,7 @@ Float implements NUM
 
     @ffi("kata_rt_exp_flt")
     @comutative
-    ** :: Float NUM => flt
+    ** :: Float NUM => Float
     
     @ffi("kata_rt_real_div_flt")
     / :: Float NonZero => Float
@@ -185,5 +185,3 @@ export NUM Float Int
 
 @ffi("kata_rt_concat_text")
 + :: Text Text => Text
-
-

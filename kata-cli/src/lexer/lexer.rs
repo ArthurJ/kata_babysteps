@@ -193,7 +193,7 @@ fn is_ident_char(c: char) -> bool {
 
 /// Check if character is an operator symbol
 fn is_operator_char(c: char) -> bool {
-    matches!(c, '+' | '-' | '*' | '/' | '\\' | '=' | '!' | '<' | '>' | '?' | '|' | '&' | '^' | '~' | '@' | '#' | '$' | '%')
+    matches!(c, '+' | '-' | '*' | '/' | '\\' | '=' | '!' | '<' | '>' | '?' | '|' | '&' | '^' | '@' | '$' | '%')
 }
 
 /// Convert string to keyword token if applicable
@@ -343,8 +343,6 @@ impl KataLexer {
     fn parser() -> impl Parser<char, Vec<(Token, std::ops::Range<usize>)>, Error = Simple<char>> + Clone {
         let token_parser = choice((
             // Literals (try longer/ambiguous first)
-            // Note: signed_number_literal must come BEFORE identifier()
-            // to capture negative numbers like -2 instead of Ident(-) + Int(2)
             float_literal(),
             signed_number_literal(),
             int_literal(),
@@ -357,12 +355,26 @@ impl KataLexer {
             // Identifiers and keywords
             identifier(),
         ))
-            .map_with_span(|token, span| (token, span));
+            .map_with_span(|token, span| Some((token, span)));
 
-        token_parser
-            .padded_by(whitespace_and_comments())
-            .repeated()
-            .then_ignore(end())
+        // Horizontal whitespace: just skip it but keep track of it if needed
+        // For indentation, we need the NEXT token's span.start to be AFTER the spaces.
+        // If I use .padded_by(whitespace_without_newline()), chumsky's padded_by
+        // will consume them and the span.start of the inner parser will NOT include them.
+        // THIS IS THE PROBLEM.
+        
+        let horizontal_whitespace = filter(|c: &char| matches!(*c, ' ' | '\t' | '\r')).repeated().at_least(1).ignored();
+        let comment = just('#').ignore_then(filter(|c: &char| *c != '\n').repeated()).ignored();
+
+        choice((
+            token_parser,
+            // Skip comments and horizontal whitespace
+            comment.map_with_span(|_, _| None),
+            horizontal_whitespace.map_with_span(|_, _| None),
+        ))
+        .repeated()
+        .map(|v| v.into_iter().flatten().collect())
+        .then_ignore(end())
     }
 
     /// Tokenize source code into a list of spanned tokens
@@ -439,8 +451,8 @@ impl KataLexer {
             let mut spaces = 0;
             let mut found_type: Option<char> = None;
 
-            // Start from the position after the newline (line_start)
-            for ch in source[line_start..token_start].chars() {
+            // Using char indices to avoid UTF-8 byte boundary panics
+            for ch in source.chars().skip(line_start).take(token_start.saturating_sub(line_start)) {
                 match ch {
                     ' ' => {
                         spaces += 1;
@@ -501,6 +513,8 @@ impl KataLexer {
                             spanned.span.start,
                             last_newline_pos
                         );
+                        
+                        log::debug!("Indent check at pos {}: current={}, last_newline={}", spanned.span.start, current_indent, last_newline_pos);
 
                         // Check consistency of indentation type
                         if let Some(prev_type) = indent_type {

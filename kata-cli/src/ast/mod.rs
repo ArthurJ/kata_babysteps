@@ -18,7 +18,7 @@ mod tests;
 pub use id::{Ident, QualifiedIdent, Literal, Directive, CacheStrategy, RestartPolicy};
 pub use types::{Type, Predicate, CompareOp, LiteralValue, FunctionSig};
 pub use pattern::{Pattern, Guard};
-pub use expr::{Expr, LambdaClause, GuardClause, GuardCondition, WithBinding, WithBindingKind};
+pub use expr::{Expr, LambdaClause, GuardClause, GuardCondition, WithBinding};
 pub use stmt::{Stmt, MatchCase, SelectCase, ChannelOp, SelectTimeout, ErrorPropagation};
 pub use decl::{
     Module, TopLevel, FunctionDef, ActionDef, DataDef, DataKind, FieldDef,

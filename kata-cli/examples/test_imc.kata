@@ -8,7 +8,7 @@ data Peso as (Float, > _ 0.0)
 data Altura as (Float, > _ 0.0)
 
 calcular_imc :: Peso Altura => IMC
-lambda (p a)
+lambda p a:
     IMC imc
     with
         imc as / p (* a a)

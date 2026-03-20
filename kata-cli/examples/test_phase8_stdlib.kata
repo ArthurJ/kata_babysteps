@@ -1,7 +1,7 @@
 # Teste do suporte para a StdLib importada nativamente da pasta `core/`
 
 double :: Int => Int
-lambda (x) (* x 2)
+lambda x: (* x 2)
 
 action main
     let my_list Cons 1 Cons 2 Nil

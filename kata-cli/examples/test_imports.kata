@@ -2,7 +2,7 @@
 # Verifica se import/export funciona no pipeline de compilação.
 
 import mock_math
-import mock_math::triplicar
+import mock_math.triplicar
 
 action main
     let resultado $(mock_math.dobrar 21)

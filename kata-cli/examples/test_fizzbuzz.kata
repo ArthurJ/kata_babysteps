@@ -1,5 +1,5 @@
 fizzbuzz :: Int => Text
-lambda (x)
+lambda x:
     both: "FizzBuzz"
     fizz: "Fizz"
     buzz: "Buzz"

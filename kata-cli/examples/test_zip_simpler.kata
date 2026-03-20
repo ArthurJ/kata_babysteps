@@ -1,6 +1,7 @@
-zip :: [Int] [Int] => [Int]
-lambda [] []
-lambda (x:xs)
+zip :: [Int] => [Int]
+lambda []:
+    []
+lambda x:xs:
     x : zip xs
 
 action main

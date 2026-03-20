@@ -16,21 +16,15 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     // === Bindings ===
-    /// Immutable binding: `let x expr`
+    /// Immutable binding: `let x 1` or `let x::Int 1` or `let (a b) pair`
     Let {
-        name: Ident,
-        value: Expr,
-    },
-
-    /// Immutable binding with destructuring: `let (a b) as tuple`
-    LetDestructure {
         pattern: Pattern,
         value: Expr,
     },
 
-    /// Mutable binding (action only): `var x expr`
+    /// Mutable binding (action only): `var x 1` or `var x::Int 1`
     Var {
-        name: Ident,
+        pattern: Pattern,
         value: Expr,
     },
 
@@ -94,18 +88,34 @@ pub enum Stmt {
 }
 
 impl Stmt {
-    /// Create a let binding
-    pub fn let_binding(name: impl Into<String>, value: Expr) -> Self {
+    /// Create a let binding with a full pattern
+    pub fn let_binding(pattern: Pattern, value: Expr) -> Self {
         Stmt::Let {
-            name: Ident::new(name),
+            pattern,
             value,
         }
     }
 
-    /// Create a var binding
-    pub fn var_binding(name: impl Into<String>, value: Expr) -> Self {
+    /// Create a simple let binding for a name
+    pub fn let_simple(name: impl Into<String>, value: Expr) -> Self {
+        Stmt::Let {
+            pattern: Pattern::Var(Ident::new(name)),
+            value,
+        }
+    }
+
+    /// Create a var binding with a full pattern
+    pub fn var_binding(pattern: Pattern, value: Expr) -> Self {
         Stmt::Var {
-            name: Ident::new(name),
+            pattern,
+            value,
+        }
+    }
+
+    /// Create a simple var binding for a name
+    pub fn var_simple(name: impl Into<String>, value: Expr) -> Self {
+        Stmt::Var {
+            pattern: Pattern::Var(Ident::new(name)),
             value,
         }
     }
@@ -151,14 +161,11 @@ impl Stmt {
 impl fmt::Display for Stmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Stmt::Let { name, value } => {
-                write!(f, "let {} {}", name, value)
+            Stmt::Let { pattern, value } => {
+                write!(f, "let {} {}", pattern, value)
             }
-            Stmt::LetDestructure { pattern, value } => {
-                write!(f, "let {} as {}", pattern, value)
-            }
-            Stmt::Var { name, value } => {
-                write!(f, "var {} {}", name, value)
+            Stmt::Var { pattern, value } => {
+                write!(f, "var {} {}", pattern, value)
             }
             Stmt::Assign { name, value } => {
                 write!(f, "var {} {}", name, value)
@@ -359,20 +366,20 @@ mod tests {
 
     #[test]
     fn test_let_stmt() {
-        let stmt = Stmt::let_binding("x", Expr::literal(Literal::int("42")));
+        let stmt = Stmt::let_simple("x", Expr::literal(Literal::int("42")));
         assert_eq!(stmt.to_string(), "let x 42");
     }
 
     #[test]
     fn test_var_stmt() {
-        let stmt = Stmt::var_binding("counter", Expr::literal(Literal::int("0")));
+        let stmt = Stmt::var_simple("counter", Expr::literal(Literal::int("0")));
         assert_eq!(stmt.to_string(), "var counter 0");
     }
 
     #[test]
     fn test_loop_stmt() {
         let stmt = Stmt::loop_stmt(vec![
-            Stmt::let_binding("x", Expr::literal(Literal::int("1"))),
+            Stmt::let_simple("x", Expr::literal(Literal::int("1"))),
         ]);
         assert!(stmt.to_string().contains("loop"));
     }

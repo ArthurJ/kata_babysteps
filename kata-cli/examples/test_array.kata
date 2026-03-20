@@ -1,6 +1,6 @@
 # Função pura que processa um array dinâmico
 processar_vendas :: Array::Float => Array::Float
-lambda (vendas)
+lambda vendas:
     vendas |> map (* 1.1 _) _ |> filter (> _ 50.0) _
 
 action main

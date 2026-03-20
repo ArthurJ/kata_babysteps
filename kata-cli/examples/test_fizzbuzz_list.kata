@@ -1,5 +1,5 @@
 fizzbuzz_list :: List::Int => List::Text
-lambda (lista)
+lambda lista:
     lista |> map (fizzbuzz) _
 
 action main

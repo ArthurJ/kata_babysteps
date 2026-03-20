@@ -1,7 +1,12 @@
-//! Type checker module for Kata Language
+//! Kata Type Checker
 //!
-//! This module will contain the type checking and inference implementation.
+//! Validates types, ensures pure/impure domain separation, enforces Orphan Rules
+//! and constructs a dependency graph (DAG) to allow topological compilation and tree shaking.
 
-pub struct TypeChecker {
-    // TODO: Implement type checker
-}
+pub mod environment;
+pub mod inference;
+pub mod checker;
+pub mod effects;
+pub mod interfaces;
+pub mod dag;
+pub mod error;

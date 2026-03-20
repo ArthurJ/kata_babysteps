@@ -35,7 +35,7 @@ fn test_import_namespace() {
 fn test_simple_function() {
     let source = r#"
 soma :: Int Int => Int
-lambda (x y)
+lambda x y:
     + x y
 "#;
     let result = lex_and_parse(source);

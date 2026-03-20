@@ -5,11 +5,10 @@
 use chumsky::prelude::*;
 use crate::lexer::{Token, SpannedToken};
 use crate::ast::id::{Ident, QualifiedIdent};
-use crate::ast::expr::{Expr, LambdaClause, GuardClause, GuardCondition, WithBinding, WithBindingKind};
-use super::common::{ident, token, newline, indent, dedent, between, separated, ParserError, ParserSpan};
+use crate::ast::expr::{Expr, LambdaClause, GuardClause, GuardCondition, WithBinding};
+use super::common::{ident, token, newline, indent, dedent, between, ParserError, ParserSpan};
 use super::literal::literal;
-use super::pattern::pattern;
-use super::r#type::type_expr;
+use super::r#type::{type_expr, function_sig};
 
 /// Parse a qualified identifier (Module::Item)
 pub fn qualified_ident() -> impl Parser<SpannedToken, QualifiedIdent, Error = ParserError> + Clone {
@@ -64,6 +63,7 @@ pub fn expression() -> impl Parser<SpannedToken, Expr, Error = ParserError> + Cl
             let primary = choice((
                 // Tuples and explicit apply use 'expr' or 'it'
                 tuple_parser(it.clone()),
+                range_parser(it.clone()),
                 list_parser(it.clone()),
                 braced_parser(it.clone()),
                 dict_parser(it.clone()),
@@ -90,8 +90,25 @@ pub fn expression() -> impl Parser<SpannedToken, Expr, Error = ParserError> + Cl
                     })
                 });
 
-            let pipeline = field.clone()
-                .then(token(Token::Pipeline).ignore_then(field.clone()).repeated())
+            let cons = field.clone()
+                .then(token(Token::Colon).ignore_then(field.clone()).repeated())
+                .map(|(first, rest)| {
+                    if rest.is_empty() {
+                        first
+                    } else {
+                        let mut all = vec![first];
+                        all.extend(rest);
+                        let mut it = all.into_iter().rev();
+                        let last = it.next().unwrap();
+                        it.fold(last, |tail, head| Expr::Cons {
+                            head: Box::new(head),
+                            tail: Box::new(tail),
+                        })
+                    }
+                });
+
+            let pipeline = cons.clone()
+                .then(token(Token::Pipeline).ignore_then(cons.clone()).repeated())
                 .map(|(first, rest)| {
                     rest.into_iter().fold(first, |acc, func| {
                         Expr::Pipeline { value: Box::new(acc), func: Box::new(func) }
@@ -127,6 +144,12 @@ where
         // Hole: _
         token(Token::Hole).map(|_| Expr::Hole),
 
+        // At keyword parsed as a function identifier
+        token(Token::At).map(|_| Expr::Var { name: Ident::new("at"), type_ascription: None }),
+        token(Token::Channel).map(|_| Expr::Var { name: Ident::new("channel!"), type_ascription: None }),
+        token(Token::Queue).map(|_| Expr::Var { name: Ident::new("queue!"), type_ascription: None }),
+        token(Token::Broadcast).map(|_| Expr::Var { name: Ident::new("broadcast!"), type_ascription: None }),
+
         // Unit: ()
         token(Token::LParen)
             .then_ignore(token(Token::RParen))
@@ -136,13 +159,20 @@ where
         literal().map(Expr::Literal),
 
         // Variable or Qualified reference
-        qualified_ident().map(|qi| {
-            if qi.is_simple() {
-                Expr::Var(Ident::new(qi.name.clone()))
-            } else {
-                Expr::QualifiedRef(qi)
-            }
-        }),
+        qualified_ident()
+            .then(token(Token::DoubleColon).ignore_then(type_expr()).or_not())
+            .map(|(qi, type_ascription)| {
+                if qi.is_simple() {
+                    Expr::Var {
+                        name: Ident::new(qi.name.clone()),
+                        type_ascription,
+                    }
+                } else {
+                    // For now, qualified refs don't have ascription in the parser
+                    // because Modulo::Item is already unambiguous.
+                    Expr::QualifiedRef(qi)
+                }
+            }),
     ))
 }
 
@@ -175,15 +205,54 @@ where
     })
 }
 
-/// List parser: [e1, e2, e3]
+/// Range parser: [start..end] or [start..step..end]
+fn range_parser<E>(expr: E) -> impl Parser<SpannedToken, Expr, Error = ParserError> + Clone
+where
+    E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
+{
+    let range_op = choice((
+        token(Token::DotDot).to(false),
+        token(Token::DotDotEqual).to(true),
+    ));
+
+    between(
+        token(Token::LBracket),
+        token(Token::RBracket),
+        expr.clone()
+            .then(range_op.clone())
+            .then(expr.clone())
+            .then(range_op.then(expr.clone()).or_not())
+    ).map(|(((start, op1_inclusive), middle), end_opt)| {
+        if let Some((op2_inclusive, end_expr)) = end_opt {
+            // [start..step..end]
+            Expr::Range {
+                start: Box::new(start),
+                step: Some(Box::new(middle)),
+                end: Box::new(end_expr),
+                inclusive: op2_inclusive,
+            }
+        } else {
+            // [start..end]
+            Expr::Range {
+                start: Box::new(start),
+                step: None,
+                end: Box::new(middle),
+                inclusive: op1_inclusive,
+            }
+        }
+    })
+}
+
+/// List parser: [e1, e2, e3] or [e1 e2 e3]
 fn list_parser<E>(expr: E) -> impl Parser<SpannedToken, Expr, Error = ParserError> + Clone
 where
     E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
 {
+    let sep = token(Token::Comma).ignored().or(newline().ignored()).or_not();
     between(
         token(Token::LBracket),
         token(Token::RBracket),
-        separated(expr, token(Token::Comma))
+        expr.clone().padded_by(sep.clone()).repeated()
     ).map(Expr::List)
 }
 
@@ -192,7 +261,12 @@ fn braced_parser<E>(expr: E) -> impl Parser<SpannedToken, Expr, Error = ParserEr
 where
     E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
 {
-    let item_sep = token(Token::Comma).ignored().or(newline()).repeated().or_not();
+    let item_sep = choice((
+        token(Token::Comma).ignored(),
+        newline().ignored(),
+        indent().ignored(),
+        dedent().ignored(),
+    )).repeated().or_not();
     
     // A "row" is a sequence of expressions
     let row = expr.clone()
@@ -204,15 +278,15 @@ where
         token(Token::RBrace),
         row.clone().then(token(Token::Semicolon).ignore_then(row).repeated())
     )
-.map(|(first_row, other_rows): (Vec<Expr>, Vec<Vec<Expr>>)| {
+    .map(|(first_row, other_rows): (Vec<Expr>, Vec<Vec<Expr>>)| {
         if other_rows.is_empty() {
             // No semicolons - simple Array
             Expr::Array(first_row)
         } else {
             // Semicolons present - it's a Tensor
-            let mut elements = first_row;
+            let mut elements = first_row.clone();
             let mut row_count = 1;
-            let col_count = elements.len();
+            let col_count = first_row.len();
             
             for next_row in other_rows {
                 if !next_row.is_empty() {
@@ -223,6 +297,8 @@ where
             
             // For now support 2D tensors (matrices)
             // dimensions = [rows, cols]
+            // Validation of consistent row lengths is deferred to the Type Checker
+            // to provide better error messages and spans.
             Expr::Tensor {
                 dimensions: vec![row_count, col_count],
                 elements,
@@ -236,6 +312,7 @@ fn dict_parser<E>(expr: E) -> impl Parser<SpannedToken, Expr, Error = ParserErro
 where
     E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
 {
+    let sep = token(Token::Comma).ignored().or(newline().ignored()).or_not();
     ident_named("Dict")
         .then_ignore(token(Token::LBracket))
         .then(
@@ -243,7 +320,7 @@ where
                 token(Token::LParen),
                 token(Token::RParen),
                 expr.clone().then_ignore(newline().or_not()).then(expr.clone())
-            ).repeated()
+            ).padded_by(sep.clone()).repeated()
         )
         .then_ignore(token(Token::RBracket))
         .map(|(_, entries)| Expr::Dict(entries))
@@ -254,9 +331,10 @@ fn set_parser<E>(expr: E) -> impl Parser<SpannedToken, Expr, Error = ParserError
 where
     E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
 {
+    let sep = token(Token::Comma).ignored().or(newline().ignored()).or_not();
     ident_named("Set")
         .then_ignore(token(Token::LBracket))
-        .then(separated(expr, token(Token::Comma)))
+        .then(expr.clone().padded_by(sep.clone()).repeated())
         .then_ignore(token(Token::RBracket))
         .map(|(_, items)| Expr::Set(items))
 }
@@ -272,35 +350,28 @@ where
         ident_named("λ").map(|_| ()),
     ));
 
-    let pattern_parser = between(
-        token(Token::LParen),
-        token(Token::RParen),
-        pattern().padded_by(newline().repeated().or_not()).repeated()
-    );
+    let pattern_parser = super::pattern::base_pattern().padded_by(newline().repeated().or_not()).repeated();
 
-    let body_parser = choice((
-        newline().repeated().at_least(1).ignore_then(indent()).ignore_then(expr.clone()).then_ignore(newline().repeated().or_not()).then_ignore(dedent()),
-        expr.clone(),
+    let with_binding = choice((
+        // 1. Signature constraint: `+ :: A B => C`
+        simple_ident()
+            .then_ignore(token(Token::DoubleColon))
+            .then(function_sig())
+            .map(|(name, sig)| WithBinding::Signature { name, sig }),
+
+        // 2. Interface constraint: `T implements ORD`
+        // We use type_expr() for the type on the left
+        type_expr()
+            .then_ignore(token(Token::Implements))
+            .then(simple_ident())
+            .map(|(typ, interface)| WithBinding::Interface { typ, interface }),
+
+        // 3. Value binding: `name as expr`
+        simple_ident()
+            .then_ignore(token(Token::As))
+            .then(expr.clone())
+            .map(|(name, value)| WithBinding::Value { name, value }),
     ));
-
-    let guard_clauses = simple_ident()
-        .then_ignore(token(Token::Colon))
-        .then(expr.clone())
-        .map(|(label, body): (Ident, Expr)| GuardClause {
-            label: label.clone(),
-            guard: GuardCondition::Named(label),
-            body,
-        })
-        .repeated()
-        .at_least(1);
-
-    let with_binding = simple_ident()
-        .then_ignore(token(Token::As))
-        .then(choice((
-            type_expr().map(|t| WithBindingKind::TypeConstraint(t)),
-            expr.clone().map(|e| WithBindingKind::Expr(e)),
-        )))
-        .map(|(name, kind)| WithBinding { name, kind });
 
     let with_bindings = token(Token::With)
         .ignore_then(newline().repeated().or_not())
@@ -309,19 +380,60 @@ where
         .then_ignore(newline().repeated().or_not())
         .then_ignore(dedent());
 
+    let body_parser = choice((
+        newline().repeated().at_least(1).ignore_then(indent())
+            .ignore_then(expr.clone().then(newline().repeated().or_not().ignore_then(with_bindings.clone()).or_not()))
+            .then_ignore(newline().repeated().or_not()).then_ignore(dedent()),
+        expr.clone().then(newline().repeated().or_not().ignore_then(with_bindings.clone()).or_not()),
+    ));
+
+    let guard_clause = choice((
+        simple_ident().map(|i| (i.clone(), GuardCondition::Named(i))),
+        token(Token::Otherwise).map(|_| (Ident::new("otherwise"), GuardCondition::Otherwise)),
+    ))
+        .then_ignore(token(Token::Colon))
+        .then(expr.clone())
+        .map(|((label, guard), body)| GuardClause {
+            label,
+            guard,
+            body,
+        });
+
+    let guards_and_with = newline().repeated().at_least(1)
+        .ignore_then(indent())
+        .ignore_then(
+            guard_clause
+                .then_ignore(newline().repeated().or_not())
+                .repeated().at_least(1)
+        )
+        .then(with_bindings.clone().or_not())
+        .then_ignore(newline().repeated().or_not())
+        .then_ignore(dedent());
+
     lambda_keyword
         .ignore_then(pattern_parser)
-        .then(guard_clauses.or_not())
-        .then(with_bindings.or_not())
-        .then(body_parser)
-        .map(|(((patterns, guards), with_bindings), body)| {
+        .then_ignore(token(Token::Colon))
+        .then(choice((
+            // Either guards (with optional 'with')
+            guards_and_with.map(|(guards, with_opt)| (Some(guards), with_opt, None)),
+            // Or normal body (with optional 'with')
+            body_parser.map(|(body, with_opt)| (None, with_opt, Some(body))),
+        )))
+        .try_map(|(patterns, (guards_opt, with_opt, body_opt)): (Vec<crate::ast::pattern::Pattern>, (Option<Vec<GuardClause>>, Option<Vec<WithBinding>>, Option<Expr>)), span| {
+            let guards = guards_opt.unwrap_or_default();
+            let with_bindings = with_opt.unwrap_or_default();
+            
+            if body_opt.is_none() && guards.is_empty() {
+                return Err(ParserError::custom(span, "Lambda clause must have either a body or guard clauses".to_string()));
+            }
+            
             let clause = LambdaClause {
                 patterns,
-                guards: guards.unwrap_or_default(),
-                body,
-                with: with_bindings.unwrap_or_default(),
+                guards,
+                body: body_opt,
+                with: with_bindings,
             };
-            Expr::Lambda { clauses: vec![clause] }
+            Ok(Expr::Lambda { clauses: vec![clause] })
         })
 }
 

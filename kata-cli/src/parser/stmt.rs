@@ -105,35 +105,26 @@ where
     result
 }
 
-/// Parse a let binding: let name expr or let pattern as expr
+/// Parse a let binding: let pattern expr
 fn let_binding<E>(expr: E) -> impl Parser<SpannedToken, Stmt, Error = ParserError> + Clone
 where
     E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
 {
     token(Token::Let)
-        .ignore_then(choice((
-            // Destructuring: let (pattern) as expr
-            pattern()
-                .then_ignore(token(Token::As))
-                .then(expr.clone())
-                .map(|(pattern, value)| Stmt::LetDestructure { pattern, value }),
-
-            // Simple: let name expr
-            simple_ident()
-                .then(expr)
-                .map(|(name, value)| Stmt::Let { name, value }),
-        )))
+        .ignore_then(pattern())
+        .then(expr)
+        .map(|(pattern, value)| Stmt::Let { pattern, value })
 }
 
-/// Parse a var binding: var name expr
+/// Parse a var binding: var pattern expr
 fn var_binding<E>(expr: E) -> impl Parser<SpannedToken, Stmt, Error = ParserError> + Clone
 where
     E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
 {
     token(Token::Var)
-        .ignore_then(simple_ident())
+        .ignore_then(pattern())
         .then(expr)
-        .map(|(name, value)| Stmt::Var { name, value })
+        .map(|(pattern, value)| Stmt::Var { pattern, value })
 }
 
 /// Parse an assignment: var name expr (reassignment to mutable variable)

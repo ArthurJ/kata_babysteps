@@ -203,6 +203,9 @@ pub enum Directive {
     /// `@comptime` - compile-time execution
     Comptime,
 
+    /// `@predicate` - marks function as suitable for type predicates
+    Predicate,
+
     /// `@restart{...}` - restart policy for actions
     Restart {
         policy: RestartPolicy,
@@ -245,6 +248,7 @@ impl fmt::Display for Directive {
             }
             Directive::Ffi { symbol } => write!(f, "@ffi(\"{}\")", symbol),
             Directive::Comptime => write!(f, "@comptime"),
+            Directive::Predicate => write!(f, "@predicate"),
             Directive::Restart { policy, tries, delay } => {
                 write!(f, "@restart{{policy: {:?}", policy)?;
                 if let Some(t) = tries {

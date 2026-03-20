@@ -1,7 +1,7 @@
-zip :: ([A], [B]) => [A B]
-lambda ([] _) []
-lambda (_ []) []
-lambda ((x:xs) (y:ys)) Cons (x y) (zip xs ys)
+zip :: [A] [B] => [(A B)]
+lambda [] _: []
+lambda _ []: []
+lambda (x:xs) (y:ys): Cons (x y) (zip xs ys)
 
 action main
     let lista_a [1 2 3]

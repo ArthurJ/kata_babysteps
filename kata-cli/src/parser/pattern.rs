@@ -13,8 +13,56 @@ use super::common::{ident, token, between, ParserError, ParserSpan};
 use super::literal::literal;
 use super::r#type::type_expr;
 
-/// Parse any pattern
+/// Parse any pattern (including Cons)
 pub fn pattern() -> impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone {
+    full_pattern()
+}
+
+/// Parse a base pattern (excluding top-level Cons, used for lambda arguments to avoid `:` collision)
+pub fn base_pattern() -> impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone {
+    recursive(|base_pat| {
+        let atom = choice((
+            tuple_pattern(full_pattern()),
+            list_pattern(full_pattern()),
+            array_pattern(full_pattern()),
+            variant_pattern(base_pat.clone()),
+            range_pattern(),
+            literal().map(Pattern::Literal),
+            token(Token::Hole).map(|_| Pattern::Wildcard),
+            ident().map(|s| {
+                log::debug!("base_pattern: ident matched '{}'", s);
+                Pattern::Var(Ident::new(s))
+            }),
+        ));
+
+        // Typed pattern: pattern::Type (higher precedence than Or)
+        let typed = atom.clone()
+            .then(token(Token::DoubleColon).ignore_then(type_expr()).or_not())
+            .map(|(pattern, type_annotation)| {
+                match type_annotation {
+                    Some(type_annotation) => Pattern::Typed {
+                        pattern: Box::new(pattern),
+                        type_annotation,
+                    },
+                    None => pattern,
+                }
+            });
+
+        // Or pattern: p1 | p2 | p3 (lowest precedence)
+        typed.clone()
+            .then(token(Token::Pipe).ignore_then(typed.clone()).repeated())
+            .map(|(first, rest): (Pattern, Vec<Pattern>)| {
+                if rest.is_empty() {
+                    first
+                } else {
+                    Pattern::Or(std::iter::once(first).chain(rest).collect())
+                }
+            })
+    })
+}
+
+/// Parse a full pattern (including Cons)
+pub fn full_pattern() -> impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone {
     recursive(|pat| {
         // Atoms are the building blocks that don't have left recursion
         let atom = choice((
@@ -26,13 +74,32 @@ pub fn pattern() -> impl Parser<SpannedToken, Pattern, Error = ParserError> + Cl
             literal().map(Pattern::Literal),
             token(Token::Hole).map(|_| Pattern::Wildcard),
             ident().map(|s| {
-                log::debug!("pattern: ident matched '{}'", s);
+                log::debug!("full_pattern: ident matched '{}'", s);
                 Pattern::Var(Ident::new(s))
             }),
         ));
 
+        // Cons pattern: head : tail (right-associative)
+        let cons = atom.clone()
+            .then(token(Token::Colon).ignore_then(atom.clone()).repeated())
+            .map(|(first, rest): (Pattern, Vec<Pattern>)| {
+                if rest.is_empty() {
+                    first
+                } else {
+                    let mut all = vec![first];
+                    all.extend(rest);
+                    
+                    let mut it = all.into_iter().rev();
+                    let last = it.next().unwrap();
+                    it.fold(last, |tail, head| Pattern::Cons {
+                        head: Box::new(head),
+                        tail: Box::new(tail),
+                    })
+                }
+            });
+
         // Typed pattern: pattern::Type (higher precedence than Or)
-        let typed = atom.clone()
+        let typed = cons.clone()
             .then(token(Token::DoubleColon).ignore_then(type_expr()).or_not())
             .map(|(pattern, type_annotation)| {
                 match type_annotation {
@@ -74,6 +141,7 @@ fn tuple_pattern(pat: impl Parser<SpannedToken, Pattern, Error = ParserError> + 
             })
     )
     .map(|patterns: Vec<Pattern>| {
+        // In Kata, (x) is just x, but (x y) is a Tuple
         if patterns.len() == 1 {
             patterns.into_iter().next().unwrap()
         } else {

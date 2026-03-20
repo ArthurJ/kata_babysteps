@@ -1,7 +1,7 @@
 # Teste simples de pattern
 
 foo :: Int => Int
-lambda (x)
+lambda x:
     x
 
 action main

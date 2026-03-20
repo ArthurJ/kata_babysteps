@@ -83,6 +83,12 @@ pub enum TopLevel {
 
     /// Type alias: `alias NewName Type`
     Alias(AliasDef),
+
+    /// Import declaration: `import module`
+    Import(Import),
+
+    /// Export declaration: `export item1 item2`
+    Export(Export),
     
     /// Top-level action statement (entry points)
     Statement(Stmt),
@@ -98,6 +104,8 @@ impl fmt::Display for TopLevel {
             TopLevel::Interface(d) => write!(f, "{}", d),
             TopLevel::Implements(d) => write!(f, "{}", d),
             TopLevel::Alias(d) => write!(f, "{}", d),
+            TopLevel::Import(d) => write!(f, "{}", d),
+            TopLevel::Export(d) => write!(f, "{}", d),
             TopLevel::Statement(s) => write!(f, "{}", s),
         }
     }
@@ -437,7 +445,6 @@ pub enum VariantPayload {
 
     /// Predicated variant: `Magreza(< _ 18.5)`
     Predicated {
-        base_type: Type,
         predicate: VariantPredicate,
     },
 }
@@ -518,8 +525,8 @@ impl fmt::Display for EnumDef {
                 VariantPayload::Unit => {}
                 VariantPayload::Typed(t) => write!(f, "({})", t)?,
                 VariantPayload::FixedValue(v) => write!(f, "({:?})", v)?,
-                VariantPayload::Predicated { base_type, predicate } => {
-                    write!(f, "({:?} {:?})", base_type, predicate)?;
+                VariantPayload::Predicated { predicate } => {
+                    write!(f, "({:?})", predicate)?;
                 }
             }
             writeln!(f)?;
@@ -559,7 +566,7 @@ pub struct InterfaceDef {
 #[derive(Debug, Clone, PartialEq)]
 pub enum InterfaceMember {
     /// Signature only: `= :: A A => Bool`
-    Signature(FunctionSig),
+    Signature(Ident, FunctionSig),
 
     /// Signature with default implementation: `!= :: A A => Bool` + `λ (x y): ...`
     FunctionDef(FunctionDef),
@@ -584,8 +591,8 @@ impl InterfaceDef {
         self
     }
 
-    pub fn add_signature(mut self, sig: FunctionSig) -> Self {
-        self.members.push(InterfaceMember::Signature(sig));
+    pub fn add_signature(mut self, name: impl Into<String>, sig: FunctionSig) -> Self {
+        self.members.push(InterfaceMember::Signature(Ident::new(name), sig));
         self
     }
 
@@ -607,7 +614,7 @@ impl fmt::Display for InterfaceDef {
         writeln!(f)?;
         for member in &self.members {
             match member {
-                InterfaceMember::Signature(sig) => writeln!(f, "    {}", sig)?,
+                InterfaceMember::Signature(name, sig) => writeln!(f, "    {} :: {}", name, sig)?,
                 InterfaceMember::FunctionDef(func) => {
                     for line in func.to_string().lines() {
                         writeln!(f, "    {}", line)?;
@@ -686,8 +693,8 @@ impl fmt::Display for ImplDef {
 ///
 /// Example:
 /// ```kata
-/// alias NonZero (NUM, != _ 0)
-/// alias MatrizLocal Matrix
+/// alias (NUM, != _ 0) as NonZero
+/// alias Matrix as MatrizLocal
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct AliasDef {
@@ -708,7 +715,7 @@ impl AliasDef {
 
 impl fmt::Display for AliasDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "alias {} {}", self.name, self.target)
+        write!(f, "alias {} as {}", self.target, self.name)
     }
 }
 

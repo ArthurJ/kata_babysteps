@@ -30,6 +30,9 @@ struct Args {
 }
 
 fn main() {
+    // Initialize logger for debugging
+    env_logger::init();
+
     let args = Args::parse();
 
     // If no input file and no specific command, show help
@@ -79,6 +82,47 @@ fn main() {
         match kata::parser::parse(tokens) {
             Ok(module) => {
                 println!("Parsing successful! {} declarations found.", module.declarations.len());
+                
+                // Run Type Checker
+                println!("Type Checking...");
+                let mut checker = kata::type_checker::checker::Checker::new();
+
+                // 1. Load core library files
+                let core_files = ["src/core/types.kata", "src/core/io.kata", "src/core/csp.kata"];
+                for file_path in core_files {
+                    if let Ok(core_source) = fs::read_to_string(file_path) {
+                        if let Ok(core_tokens) = KataLexer::lex_with_indent(&core_source) {
+                            if let Ok(core_module) = kata::parser::parse(core_tokens) {
+                                let core_dag = kata::type_checker::dag::DependencyGraph::from_module(&core_module);
+                                if let Ok(core_sorted) = core_dag.topological_sort() {
+                                    let _ = checker.check_module(core_sorted);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // For a single file, we can topologically sort the declarations first
+                let dag = kata::type_checker::dag::DependencyGraph::from_module(&module);
+                match dag.topological_sort() {
+                    Ok(sorted_decls) => {
+                        match checker.check_module(sorted_decls) {
+                            Ok(tast) => {
+                                println!("Type Checking successful! Produced TAST with {} declarations.", tast.len());
+                            }
+                            Err(e) => {
+                                eprintln!("=== TYPE ERRORS ===\n");
+                                eprintln!("  {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("=== CYCLIC DEPENDENCY ERROR ===\n");
+                        eprintln!("  {}", e);
+                        std::process::exit(1);
+                    }
+                }
             }
             Err(errors) => {
                 eprintln!("=== PARSER ERRORS ===\n");

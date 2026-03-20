@@ -17,7 +17,7 @@ use chumsky::prelude::*;
 use crate::lexer::{Token, SpannedToken};
 use crate::ast::id::{Ident, QualifiedIdent};
 use crate::ast::types::{Type, FunctionSig, Predicate, CompareOp, LiteralValue};
-use super::common::{ident, token, between, separated, ParserError, ParserSpan};
+use super::common::{ident, token, between, ParserError, ParserSpan};
 
 // ============================================================================
 // LAYER 0: INDEPENDENT PARSERS (No recursion needed)
@@ -105,6 +105,15 @@ fn type_arg(arg: Recursive<'_, SpannedToken, Type, ParserError>)
             }),
         // Type variable: T
         type_var().map(Type::Var),
+        // List Type: [T]
+        between(
+            token(Token::LBracket),
+            token(Token::RBracket),
+            arg.clone()
+        ).map(|t| Type::Named {
+            name: QualifiedIdent::simple("List"),
+            params: vec![t]
+        }),
         // Tuple: (A B) - uses the recursive arg directly, not type_expr_inner
         between(
             token(Token::LParen),
@@ -129,8 +138,10 @@ fn type_arg(arg: Recursive<'_, SpannedToken, Type, ParserError>)
 fn type_expr_inner() -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
     recursive(|typ| {
         let base = choice((
+            list_type_inner(typ.clone()),
             tuple_type_inner(typ.clone()),
-            simple_type(),
+            generic_type(),
+            type_var().map(Type::Var),
         ));
 
         choice((
@@ -146,19 +157,47 @@ fn type_expr_inner() -> impl Parser<SpannedToken, Type, Error = ParserError> + C
 // LAYER 1: SELF-CONTAINED RECURSIVE PARSERS
 // ============================================================================
 
-/// Parse a tuple type: (A B C)
+/// Parse a list type: [A]
+fn list_type_inner(type_inner: impl Parser<SpannedToken, Type, Error = ParserError> + Clone + 'static)
+    -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
+    between(
+        token(Token::LBracket),
+        token(Token::RBracket),
+        type_inner
+    )
+    .map(|t| Type::Named {
+        name: QualifiedIdent::simple("List"),
+        params: vec![t]
+    })
+}
+
+/// Parse a tuple type: (A B C) or (A, B, C)
 fn tuple_type_inner(type_inner: impl Parser<SpannedToken, Type, Error = ParserError> + Clone + 'static)
     -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
+    let sep = choice((
+        token(Token::Comma).ignored(),
+        newline().ignored(),
+    )).repeated().or_not();
+
     between(
         token(Token::LParen),
         token(Token::RParen),
-        separated(type_inner, token(Token::Comma).ignored().or(newline().ignored()).or_not())
+        type_inner.clone()
+            .then(sep.clone().ignore_then(type_inner.clone()).repeated())
+            .or_not()
     )
-    .map(|types: Vec<Type>| {
-        if types.len() == 1 {
-            types.into_iter().next().unwrap()
-        } else {
-            Type::Tuple(types)
+    .map(|opt_types| {
+        match opt_types {
+            None => Type::Tuple(vec![]),
+            Some((first, rest)) => {
+                if rest.is_empty() {
+                    first
+                } else {
+                    let mut types = vec![first];
+                    types.extend(rest);
+                    Type::Tuple(types)
+                }
+            }
         }
     })
 }
@@ -225,8 +264,10 @@ pub fn type_expr() -> impl Parser<SpannedToken, Type, Error = ParserError> + Clo
     recursive(|typ| {
         let base = choice((
             refined_type_inner(typ.clone()),
+            list_type_inner(typ.clone()),
             tuple_type_inner(typ.clone()),
-            simple_type(),
+            generic_type(),
+            type_var().map(Type::Var),
         ));
 
         choice((
@@ -246,10 +287,14 @@ fn recursive_type() -> impl Parser<SpannedToken, Type, Error = ParserError> + Cl
         choice((
             // Function type: A B -> C
             function_type_inner(typ.clone()),
+            // List type: [A]
+            list_type_inner(typ.clone()),
             // Tuple type: (A B C)
             tuple_type_inner(typ.clone()),
-            // Simple named type or type variable
-            simple_type(),
+            // Generic type or simple name
+            generic_type(),
+            // Type variable
+            type_var().map(Type::Var),
         ))
     })
 }
@@ -321,11 +366,17 @@ fn literal_value() -> impl Parser<SpannedToken, LiteralValue, Error = ParserErro
 
 /// Parse a function signature: Arg1 Arg2 => Return
 pub fn function_sig() -> impl Parser<SpannedToken, FunctionSig, Error = ParserError> + Clone {
+    let arg_sep = choice((
+        token(Token::Comma).ignored(),
+        newline().ignored(),
+    )).repeated().or_not();
+
     type_expr()
+        .then_ignore(arg_sep.clone())
         .repeated()
         .then_ignore(token(Token::Arrow))
         .then(type_expr())
-        .map(|(params, return_type): (Vec<Type>, Type)| {
+        .map(|(params, return_type)| {
             log::debug!("function_sig matched with {} params", params.len());
             FunctionSig::new(params, return_type)
         })

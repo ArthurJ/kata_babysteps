@@ -1,6 +1,6 @@
 quicksort :: [Int] => [Int]
-lambda ([]) []
-lambda ((pivo:resto))
+lambda []: []
+lambda (pivo:resto):
     Cons (quicksort menores) (Cons pivo (quicksort maiores))
     with
         menores as filter $(< _ pivo) resto

@@ -20,8 +20,11 @@ pub enum Expr {
     Literal(Literal),
 
     // === Variables and References ===
-    /// Variable reference: `x`, `minha_var`
-    Var(Ident),
+    /// Variable reference: `x`, `minha_var` or `x::Int`
+    Var {
+        name: Ident,
+        type_ascription: Option<Type>,
+    },
 
     /// Qualified reference: `Modulo::funcao`
     QualifiedRef(QualifiedIdent),
@@ -33,6 +36,13 @@ pub enum Expr {
     /// List expression: `[1, 2, 3]`
     List(Vec<Expr>),
 
+    /// Cons expression (head:tail for lists)
+    /// Example: `x : xs`
+    Cons {
+        head: Box<Expr>,
+        tail: Box<Expr>,
+    },
+
     /// Array expression: `{1, 2, 3}`
     Array(Vec<Expr>),
 
@@ -42,11 +52,12 @@ pub enum Expr {
         elements: Vec<Expr>,
     },
 
-    /// Range expression: `[1..10]`, `[1..2..100]`
+    /// Range expression: `[1..10]`, `[1..2..100]`, `[1..=10]`
     Range {
         start: Box<Expr>,
         end: Box<Expr>,
         step: Option<Box<Expr>>,
+        inclusive: bool,
     },
 
     /// Dictionary expression: `Dict [("chave" "valor")]`
@@ -133,7 +144,18 @@ impl Expr {
 
     /// Create a variable reference
     pub fn var(name: impl Into<String>) -> Self {
-        Expr::Var(Ident::new(name))
+        Expr::Var {
+            name: Ident::new(name),
+            type_ascription: None,
+        }
+    }
+
+    /// Create a typed variable reference
+    pub fn var_typed(name: impl Into<String>, typ: Type) -> Self {
+        Expr::Var {
+            name: Ident::new(name),
+            type_ascription: Some(typ),
+        }
     }
 
     /// Create a tuple expression
@@ -179,7 +201,7 @@ impl Expr {
 
     /// Check if this is a variable
     pub fn is_var(&self) -> bool {
-        matches!(self, Expr::Var(_))
+        matches!(self, Expr::Var { .. })
     }
 
     /// Check if this is a hole
@@ -192,7 +214,12 @@ impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expr::Literal(lit) => write!(f, "{}", lit),
-            Expr::Var(v) => write!(f, "{}", v),
+            Expr::Var { name, type_ascription } => {
+                match type_ascription {
+                    Some(t) => write!(f, "{}::{}", name, t),
+                    None => write!(f, "{}", name),
+                }
+            }
             Expr::QualifiedRef(q) => write!(f, "{}", q),
             Expr::Tuple(exprs) => {
                 write!(f, "(")?;
@@ -213,6 +240,9 @@ impl fmt::Display for Expr {
                     write!(f, "{}", e)?;
                 }
                 write!(f, "]")
+            }
+            Expr::Cons { head, tail } => {
+                write!(f, "{} : {}", head, tail)
             }
             Expr::Array(exprs) => {
                 write!(f, "{{")?;
@@ -240,12 +270,15 @@ impl fmt::Display for Expr {
                 }
                 write!(f, "}}")
             }
-            Expr::Range { start, end, step } => {
+            Expr::Range { start, end, step, inclusive } => {
                 write!(f, "[{}", start)?;
                 if let Some(s) = step {
                     write!(f, "..{}..", s)?;
                 } else {
                     write!(f, "..")?;
+                }
+                if *inclusive {
+                    write!(f, "=")?;
                 }
                 write!(f, "{}]", end)
             }
@@ -362,8 +395,8 @@ pub struct LambdaClause {
     pub patterns: Vec<Pattern>,
     /// Guard conditions (optional)
     pub guards: Vec<GuardClause>,
-    /// Body expression
-    pub body: Expr,
+    /// Body expression (optional if guards are present)
+    pub body: Option<Expr>,
     /// Bindings for guards (optional)
     /// Used for both value bindings and type constraints
     pub with: Vec<WithBinding>,
@@ -373,13 +406,13 @@ impl LambdaClause {
     pub fn new(patterns: Vec<Pattern>, body: Expr) -> Self {
         LambdaClause {
             patterns,
-            guards: Vec::new(),
-            body,
-            with: Vec::new(),
+            guards: vec![],
+            body: Some(body),
+            with: vec![],
         }
     }
 
-    pub fn with_guards(patterns: Vec<Pattern>, guards: Vec<GuardClause>, body: Expr) -> Self {
+    pub fn with_guards(patterns: Vec<Pattern>, guards: Vec<GuardClause>, body: Option<Expr>) -> Self {
         LambdaClause {
             patterns,
             guards,
@@ -388,7 +421,7 @@ impl LambdaClause {
         }
     }
 
-    pub fn with_bindings(patterns: Vec<Pattern>, guards: Vec<GuardClause>, body: Expr, with: Vec<WithBinding>) -> Self {
+    pub fn with_bindings(patterns: Vec<Pattern>, guards: Vec<GuardClause>, body: Option<Expr>, with: Vec<WithBinding>) -> Self {
         LambdaClause {
             patterns,
             guards,
@@ -400,28 +433,29 @@ impl LambdaClause {
 
 impl fmt::Display for LambdaClause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(")?;
         for (i, p) in self.patterns.iter().enumerate() {
             if i > 0 {
                 write!(f, " ")?;
             }
             write!(f, "{}", p)?;
         }
-        write!(f, ")")?;
+        write!(f, ":")?;
         
         if !self.guards.is_empty() {
             for guard in &self.guards {
                 write!(f, "\n    {}: {}", guard.label, guard.body)?;
             }
-        } else {
-            write!(f, ": {}", self.body)?;
+        } else if let Some(ref body) = self.body {
+            write!(f, " {}", body)?;
         }
+
         if !self.with.is_empty() {
             write!(f, "\n    with")?;
             for binding in &self.with {
                 write!(f, "\n        {}", binding)?;
             }
         }
+
         Ok(())
     }
 }
@@ -478,30 +512,34 @@ impl fmt::Display for GuardCondition {
 /// with
 ///     base as calcular_base entrada
 ///     variante as extrair_variante carga
-///     T as (T implements ORD)
+///     + :: A B => C
+///     T implements ORD
 /// ```
 #[derive(Debug, Clone, PartialEq)]
-pub struct WithBinding {
-    /// Variable name being bound
-    pub name: Ident,
-    /// Binding kind
-    pub kind: WithBindingKind,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum WithBindingKind {
-    /// Expression binding: `name as expr`
-    Expr(Expr),
-    /// Type constraint: `T as (T implements ORD)`
-    TypeConstraint(Type),
+pub enum WithBinding {
+    /// Value binding: `name as expr`
+    Value {
+        name: Ident,
+        value: Expr,
+    },
+    /// Signature constraint: `+ :: A B => C`
+    Signature {
+        name: Ident,
+        sig: super::types::FunctionSig,
+    },
+    /// Interface constraint: `T implements ORD`
+    Interface {
+        typ: Type,
+        interface: Ident,
+    },
 }
 
 impl fmt::Display for WithBinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} as ", self.name)?;
-        match &self.kind {
-            WithBindingKind::Expr(e) => write!(f, "{}", e),
-            WithBindingKind::TypeConstraint(t) => write!(f, "({} implements ...)", t),
+        match self {
+            WithBinding::Value { name, value } => write!(f, "{} as {}", name, value),
+            WithBinding::Signature { name, sig } => write!(f, "{} :: {}", name, sig),
+            WithBinding::Interface { typ, interface } => write!(f, "{} implements {}", typ, interface),
         }
     }
 }

@@ -6,6 +6,7 @@
 pub mod lexer;
 pub mod ast;
 pub mod parser;
+pub mod tast;
 pub mod type_checker;
 pub mod ir;
 pub mod codegen;

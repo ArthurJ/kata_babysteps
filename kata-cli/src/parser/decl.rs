@@ -20,10 +20,9 @@ use crate::ast::decl::{
     EnumDef, VariantDef, VariantPayload, InterfaceDef, InterfaceMember,
     ImplDef, AliasDef, Import, Export,
 };
-use crate::ast::expr::{LambdaClause, GuardClause, GuardCondition};
+use crate::ast::expr::{LambdaClause, GuardClause, GuardCondition, WithBinding};
 use super::common::{ident, token, newline, indent, dedent, between, separated1, ParserError, ParserSpan};
 use super::expr::expression;
-use super::pattern::pattern;
 use super::r#type::{type_expr, function_sig};
 use super::stmt::recursive_statement;
 use crate::ast::expr::Expr;
@@ -35,29 +34,32 @@ pub fn module() -> impl Parser<SpannedToken, Module, Error = ParserError> + Clon
     let expr = expression();
     log::debug!("module(): expression() created");
 
-    // Parse optional leading newlines, then imports, then declarations, then optional exports
+    // Parse a sequence of top-level declarations (including imports/exports anywhere)
     let result = newline().repeated().or_not()
         .ignore_then(
-            import_decl().padded_by(newline().repeated()).repeated()
-                .then(
-                    top_level_decl(expr)
-                        .map(|d| {
-                            log::debug!("module: matched declaration");
-                            d
-                        })
-                        .padded_by(newline().repeated().or_not())
-                        .repeated()
-                )
-
-                .then(export_decl().padded_by(newline().repeated()).or_not())
+            top_level_decl(expr)
+                .padded_by(newline().repeated().or_not())
+                .repeated()
         )
         .then_ignore(newline().repeated().or_not())
         .then_ignore(end())
-        .map(|((imports, declarations), exports)| {
+        .map(|declarations| {
+            let mut imports = Vec::new();
+            let mut exports = Vec::new();
+            let mut final_decls = Vec::new();
+
+            for decl in declarations {
+                match decl {
+                    TopLevel::Import(i) => imports.push(i),
+                    TopLevel::Export(e) => exports.extend(e.items),
+                    _ => final_decls.push(decl),
+                }
+            }
+
             Module {
                 name: String::new(), // Will be set by caller
-                declarations,
-                exports: exports.map(|e| e.items).unwrap_or_default(),
+                declarations: final_decls,
+                exports,
                 imports,
             }
         });
@@ -77,8 +79,8 @@ where
         .map(|(directives, mut decl)| {
             // Apply directives to the declaration
             match &mut decl {
-                TopLevel::Function(f) => f.directives = directives,
-                TopLevel::Action(a) => a.directives = directives,
+                TopLevel::Function(f) => f.directives.extend(directives),
+                TopLevel::Action(a) => a.directives.extend(directives),
                 _ => {}
             }
             decl
@@ -93,15 +95,18 @@ where
     E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
 {
     log::debug!("top_level(): Starting");
-    // Note: We don't use recursive() here because directives are handled
-    // separately in module() parsing, not as a recursive structure
     let result = choice((
+        // Import declaration
+        import_decl().map(TopLevel::Import),
+
+        // Export declaration
+        export_decl().map(TopLevel::Export),
+
         // Action definition
         action_def(expr.clone()).map(TopLevel::Action),
 
-        // Function definition
+        // Function definition or signature
         function_def(expr.clone()).map(TopLevel::Function),
-
 
         // Data definition
         data_def().map(TopLevel::Data),
@@ -117,6 +122,9 @@ where
 
         // Type alias
         alias_def().map(TopLevel::Alias),
+
+        // Raw statement (usually top-level action calls)
+        recursive_statement(expr).map(TopLevel::Statement),
     ));
     log::debug!("top_level(): Complete");
     result
@@ -173,17 +181,40 @@ where
     function_name()
         .then_ignore(token(Token::DoubleColon))
         .then(function_sig())
-        .then_ignore(newline().repeated().or_not())
-        .then(lambda_clause(expr).padded_by(newline().repeated().or_not()).repeated().at_least(1))
+        .then(
+            choice((
+                lambda_clause(expr.clone()),
+                otherwise_clause(expr.clone()),
+            ))
+            .padded_by(newline().repeated().or_not())
+            .repeated()
+        )
         .map(|((name, sig), clauses)| {
             let arity = sig.arity();
-            log::debug!("function_def matched '{}' with {} clauses", name.0, clauses.len());
             FunctionDef {
                 name,
                 sig,
                 arity,
                 directives: vec![],
                 clauses,
+            }
+        })
+}
+
+/// Parse an otherwise clause: otherwise: body
+fn otherwise_clause<E>(expr: E) -> impl Parser<SpannedToken, LambdaClause, Error = ParserError> + Clone
+where
+    E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
+{
+    token(Token::Otherwise)
+        .ignore_then(token(Token::Colon))
+        .ignore_then(expr)
+        .map(|body| {
+            LambdaClause {
+                patterns: vec![], // Will be filled with wildcards if empty during type checking
+                guards: vec![],
+                body: Some(body),
+                with: vec![],
             }
         })
 }
@@ -210,6 +241,9 @@ fn operator_name() -> impl Parser<SpannedToken, Ident, Error = ParserError> + Cl
     })
 }
 
+use super::pattern::base_pattern;
+use crate::ast::pattern::Pattern;
+
 /// Parse a lambda clause: λ (pattern) body
 fn lambda_clause<E>(expr: E) -> impl Parser<SpannedToken, LambdaClause, Error = ParserError> + Clone
 where
@@ -218,34 +252,60 @@ where
     // λ or lambda keyword
     let lambda_keyword = token(Token::Lambda);
 
-    // Pattern in parens - supports multiple patterns for multi-argument functions
-    let pattern_parser = between(token(Token::LParen), token(Token::RParen), pattern().padded_by(newline().repeated().or_not()).repeated())
-        .map(|p| {
+    // Pattern list - supports multiple patterns for multi-argument functions
+    // e.g. λ (0) acc: body
+    let pattern_parser = base_pattern().padded_by(newline().repeated().or_not()).repeated()
+        .map(|p: Vec<Pattern>| {
             log::debug!("lambda_clause pattern_parser matched {} patterns: {:?}", p.len(), p);
             p
         });
 
-    // Body expression
+    // Guards and With bindings block
+    let guards_and_with = newline().repeated().at_least(1)
+        .ignore_then(indent())
+        .ignore_then(
+            guard_clause(expr.clone())
+                .then_ignore(newline().repeated().or_not())
+                .repeated().at_least(1)
+        )
+        .then(with_bindings(expr.clone()).or_not())
+        .then_ignore(newline().repeated().or_not())
+        .then_ignore(dedent());
+
+    // Body expression (Inline or Indented without guards)
     let body_parser = choice((
         // Indented body
-        newline().repeated().at_least(1).ignore_then(indent()).ignore_then(expr.clone()).then_ignore(newline().repeated().or_not()).then_ignore(dedent()),
-        // Inline body (no colon)
-        expr.clone(),
+        newline().repeated().at_least(1).ignore_then(indent())
+            .ignore_then(expr.clone().then(newline().repeated().or_not().ignore_then(with_bindings(expr.clone())).or_not()))
+            .then_ignore(newline().repeated().or_not()).then_ignore(dedent()),
+        // Inline body
+        expr.clone().then(newline().repeated().or_not().ignore_then(with_bindings(expr.clone())).or_not()),
     ));
 
     lambda_keyword
         .ignore_then(pattern_parser)
-        .then(guard_clause(expr.clone()).repeated().or_not())
-        .then(with_bindings(expr.clone()).or_not())
-        .then(body_parser)
-        .map(|(((patterns, guards), with_bindings), body)| {
+        .then_ignore(token(Token::Colon))
+        .then(choice((
+            // Either guards (with optional 'with')
+            guards_and_with.map(|(guards, with_opt)| (Some(guards), with_opt, None)),
+            // Or normal body (with optional 'with')
+            body_parser.map(|(body, with_opt)| (None, with_opt, Some(body))),
+        )))
+        .try_map(|(patterns, (guards_opt, with_opt, body_opt)): (Vec<Pattern>, (Option<Vec<GuardClause>>, Option<Vec<WithBinding>>, Option<Expr>)), span| {
             log::debug!("lambda_clause matched {} patterns", patterns.len());
-            LambdaClause {
-                patterns,
-                guards: guards.unwrap_or_default(),
-                body,
-                with: with_bindings.unwrap_or_default(),
+            let guards = guards_opt.unwrap_or_default();
+            let with_bindings = with_opt.unwrap_or_default();
+            
+            if body_opt.is_none() && guards.is_empty() {
+                return Err(ParserError::custom(span, "Lambda clause must have either a body or guard clauses".to_string()));
             }
+            
+            Ok(LambdaClause {
+                patterns,
+                guards,
+                body: body_opt,
+                with: with_bindings,
+            })
         })
 }
 
@@ -254,14 +314,17 @@ fn guard_clause<E>(expr: E) -> impl Parser<SpannedToken, GuardClause, Error = Pa
 where
     E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
 {
-    ident().map(Ident::new)
-        .then_ignore(token(Token::Colon))
-        .then(expr)
-        .map(|(label, body)| GuardClause {
-            label: label.clone(),
-            guard: GuardCondition::Named(label),
-            body,
-        })
+    choice((
+        ident().map(Ident::new).map(|i| (i.clone(), GuardCondition::Named(i))),
+        token(Token::Otherwise).map(|_| (Ident::new("otherwise"), GuardCondition::Otherwise)),
+    ))
+    .then_ignore(token(Token::Colon))
+    .then(expr)
+    .map(|((label, guard), body)| GuardClause {
+        label,
+        guard,
+        body,
+    })
 }
 
 /// Parse with bindings
@@ -270,26 +333,41 @@ where
     E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
 {
     token(Token::With)
-        .ignore_then(newline().or_not())
-        .then_ignore(indent())
-        .then(with_binding(expr).repeated())
+        .ignore_then(newline().repeated().or_not())
+        .ignore_then(indent())
+        .ignore_then(
+            with_binding(expr)
+                .padded_by(newline().repeated().or_not())
+                .repeated()
+        )
         .then_ignore(newline().repeated().or_not())
         .then_ignore(dedent())
-        .map(|(_, bindings)| bindings)
 }
 
-/// Parse a single with binding: name as expr
+/// Parse a single with binding: name as expr, name :: sig, or type implements interface
 fn with_binding<E>(expr: E) -> impl Parser<SpannedToken, crate::ast::expr::WithBinding, Error = ParserError> + Clone
 where
     E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
 {
-    ident().map(Ident::new)
-        .then_ignore(token(Token::As))
-        .then(expr)
-        .map(|(name, expr)| crate::ast::expr::WithBinding {
-            name,
-            kind: crate::ast::expr::WithBindingKind::Expr(expr),
-        })
+    choice((
+        // 1. Signature constraint: `+ :: A B => C`
+        ident().map(Ident::new)
+            .then_ignore(token(Token::DoubleColon))
+            .then(function_sig())
+            .map(|(name, sig)| crate::ast::expr::WithBinding::Signature { name, sig }),
+
+        // 2. Interface constraint: `T implements ORD`
+        type_expr()
+            .then_ignore(token(Token::Implements))
+            .then(ident().map(Ident::new))
+            .map(|(typ, interface)| crate::ast::expr::WithBinding::Interface { typ, interface }),
+
+        // 3. Value binding: `name as expr`
+        ident().map(Ident::new)
+            .then_ignore(token(Token::As))
+            .then(expr)
+            .map(|(name, value)| crate::ast::expr::WithBinding::Value { name, value }),
+    ))
 }
 
 // ============================================================================
@@ -368,6 +446,16 @@ fn data_def() -> impl Parser<SpannedToken, DataDef, Error = ParserError> + Clone
                 field_def().padded_by(newline().repeated().or_not()).repeated()
             ).map(DataKind::Product),
 
+            // Fields in an indented block (Product)
+            newline().repeated().at_least(1)
+                .ignore_then(indent())
+                .ignore_then(
+                    field_def().padded_by(newline().repeated().or_not()).repeated().at_least(1)
+                )
+                .then_ignore(newline().repeated().or_not())
+                .then_ignore(dedent())
+                .map(DataKind::Product),
+
             // Refinement syntax: data Name as (Base, Predicate)
             token(Token::As)
                 .ignore_then(type_expr())
@@ -411,16 +499,29 @@ fn enum_def() -> impl Parser<SpannedToken, EnumDef, Error = ParserError> + Clone
     token(Token::Enum)
         .ignore_then(type_name_ident())
         .then(type_params().or_not())
-        .then_ignore(newline().repeated().or_not())
-        .then_ignore(indent())
-        .then(variant_def().padded_by(newline().repeated().or_not()).repeated())
-        .then_ignore(newline().repeated().or_not())
-        .then_ignore(dedent())
+        .then(
+            choice((
+                // 1. Indented block of variants
+                newline().repeated().at_least(1)
+                    .ignore_then(indent())
+                    .ignore_then(variant_def().padded_by(newline().repeated().or_not()).repeated())
+                    .then_ignore(newline().repeated().or_not())
+                    .then_ignore(dedent()),
+                
+                // 2. Variants on the next line without indent (not recommended but handled)
+                newline().repeated().at_least(1)
+                    .ignore_then(variant_def().padded_by(newline().repeated().or_not()).repeated().at_least(1)),
+
+                // 3. Variants on the same line
+                variant_def().padded_by(newline().repeated().or_not()).repeated(),
+            ))
+            .or_not()
+        )
         .map(|((name, type_params), variants)| {
             EnumDef {
                 name,
                 type_params: type_params.unwrap_or_default(),
-                variants,
+                variants: variants.unwrap_or_default(),
             }
         })
 }
@@ -460,11 +561,9 @@ fn variant_payload() -> impl Parser<SpannedToken, VariantPayload, Error = Parser
 
 /// Parse a predicated payload
 fn predicate_payload() -> impl Parser<SpannedToken, VariantPayload, Error = ParserError> + Clone {
-    type_expr()
-        .then_ignore(token(Token::Comma))
-        .then(variant_predicate())
-        .map(|(base_type, predicate)| {
-            VariantPayload::Predicated { base_type, predicate }
+    variant_predicate()
+        .map(|predicate| {
+            VariantPayload::Predicated { predicate }
         })
 }
 
@@ -534,37 +633,52 @@ fn interface_member<E>(expr: E) -> impl Parser<SpannedToken, InterfaceMember, Er
 where
     E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
 {
-    choice((
-        // Function definition with default implementation
-        function_def(expr.clone()).map(InterfaceMember::FunctionDef),
-
-        // Just a signature
-        function_sig().map(InterfaceMember::Signature),
-    ))
+    directive().repeated()
+        .then(function_def(expr))
+        .map(|(directives, mut f)| {
+            if f.clauses.is_empty() {
+                InterfaceMember::Signature(f.name, f.sig)
+            } else {
+                f.directives = directives;
+                InterfaceMember::FunctionDef(f)
+            }
+        })
 }
 
 // ============================================================================
 // IMPLEMENTATION DEFINITION
 // ============================================================================
 
-/// Parse an implementation: Type implements Interface { functions }
+/// Parse an implementation: Type implements Interface
 fn impl_def<E>(expr: E) -> impl Parser<SpannedToken, ImplDef, Error = ParserError> + Clone
 where
     E: Parser<SpannedToken, Expr, Error = ParserError> + Clone + 'static,
 {
+    let body = newline().repeated().at_least(1)
+        .ignore_then(indent())
+        .ignore_then(
+            directive().repeated()
+                .then(function_def(expr))
+                .map(|(directives, mut f)| {
+                    f.directives = directives;
+                    f
+                })
+                .padded_by(newline().repeated().or_not())
+                .repeated()
+        )
+        .then_ignore(newline().repeated().or_not())
+        .then_ignore(dedent());
+
     qualified_type_name()
         .then_ignore(token(Token::Implements))
+
         .then(type_name_ident())
-        .then_ignore(newline().repeated().or_not())
-        .then_ignore(indent())
-        .then(function_def(expr).padded_by(newline().repeated().or_not()).repeated())
-        .then_ignore(newline().repeated().or_not())
-        .then_ignore(dedent())
-        .map(|((type_name, interface), implementations)| {
+        .then(body.or_not())
+        .map(|((type_name, interface), implementations_opt)| {
             ImplDef {
                 type_name,
                 interface,
-                implementations,
+                implementations: implementations_opt.unwrap_or_default(),
             }
         })
 }
@@ -573,13 +687,14 @@ where
 // TYPE ALIAS
 // ============================================================================
 
-/// Parse a type alias: alias NewName Type
+/// Parse a type alias: alias Type as NewName
 fn alias_def() -> impl Parser<SpannedToken, AliasDef, Error = ParserError> + Clone {
     token(Token::Alias)
-        .ignore_then(type_name_ident())
-        .then(type_expr())
+        .ignore_then(type_expr())
+        .then_ignore(token(Token::As))
+        .then(type_name_ident())
         .then_ignore(newline().or_not())
-        .map(|(name, target)| {
+        .map(|(target, name)| {
             AliasDef { name, target }
         })
 }
@@ -603,6 +718,9 @@ fn directive() -> impl Parser<SpannedToken, Directive, Error = ParserError> + Cl
             // @comutative
             keyword("comutative").map(|_| Directive::Comutative),
 
+            // @predicate
+            keyword("predicate").map(|_| Directive::Predicate),
+
             // @comptime
             keyword("comptime").map(|_| Directive::Comptime),
 
@@ -610,10 +728,8 @@ fn directive() -> impl Parser<SpannedToken, Directive, Error = ParserError> + Cl
             keyword("ffi")
                 .ignore_then(between(token(Token::LParen), token(Token::RParen), string_content()))
                 .map(|symbol| Directive::Ffi { symbol }),
-
-            // @cache_strategy{...} and @restart{...} would need more complex parsing
-            // Simplified for now
         )))
+        .padded_by(newline().repeated().or_not())
 }
 
 /// Parse string content (without quotes)
@@ -640,12 +756,13 @@ fn type_name_ident() -> impl Parser<SpannedToken, Ident, Error = ParserError> + 
     })
 }
 
-/// Parse a type variable (lowercase identifier)
+/// Parse a type variable (generic parameter)
 fn type_var_ident() -> impl Parser<SpannedToken, Ident, Error = ParserError> + Clone {
     filter_map(|_span: ParserSpan, spanned: SpannedToken| {
         match &spanned.token {
-            Token::Ident(s) if s.chars().next().map(|c| c.is_ascii_lowercase()).unwrap_or(true) => Ok(Ident::new(s)),
-            _ => Err(ParserError::custom(_span, "expected type variable".to_string())),
+            // Type variables can be uppercase (T, E) or lowercase (a, b)
+            Token::Ident(s) => Ok(Ident::new(s)),
+            _ => Err(ParserError::custom(_span, "expected type identifier".to_string())),
         }
     })
 }

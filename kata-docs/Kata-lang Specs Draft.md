@@ -107,8 +107,8 @@ As *Actions* interagem com o *Runtime* Kata, o Sistema Operacional e orquestram 
 * \!\> :: Sender::T T \=\> () (Operador direcional de envio. Transfere a propriedade do dado para o canal).  
 * \<\! :: Receiver::T \=\> T (Operador direcional de receção. Bloqueia a *Green Thread* até os dados estarem disponíveis).  
 * \<\!? :: Receiver::T \=\> Optional::T (Tentativa não-bloqueante de leitura de canal).  
-* select\! :: (Estrutura de bloco multiplexadora para aguardar em múltiplos canais simultaneamente).  
-* timeout\! :: Int \=\> () (Ramo especial do select\! para desbloqueio por inatividade em milissegundos).
+* select :: (Estrutura de bloco multiplexadora para aguardar em múltiplos canais simultaneamente).  
+* timeout :: Int \=\> () (Ramo especial do select para desbloqueio por inatividade em milissegundos).
 
 #### **2.2. Entrada e Saída (I/O)**
 
@@ -956,13 +956,13 @@ action consumidor\_nao\_bloqueante (rx)
         Some dados: echo\! format "Recebido agora: {}" dados
         None: echo\! "Nenhum dado disponível no canal. Continuando..."
 
-### **4\. Multiplexagem Não-Determinística (select\!)**
+### **4\. Multiplexagem Não-Determinística (select)**
 
-O select\! é a estrutura de controlo imperativa para aguardar múltiplos eventos assíncronos. Avalia todas as operações de canal declaradas nos seus ramos (case) e bloqueia a *Action* até que **um** dos eventos esteja pronto. Se múltiplos canais estiverem prontos em simultâneo, o escalonador escolhe um ramo de forma pseudoaleatória para garantir justiça (*fairness*) e evitar a inanição (*starvation*) de canais secundários.
+O select é a estrutura de controlo imperativa para aguardar múltiplos eventos assíncronos. Avalia todas as operações de canal declaradas nos seus ramos (case) e bloqueia a *Action* até que **um** dos eventos esteja pronto. Se múltiplos canais estiverem prontos em simultâneo, o escalonador escolhe um ramo de forma pseudoaleatória para garantir justiça (*fairness*) e evitar a inanição (*starvation*) de canais secundários.
 
 action multiplexador (rx\_a rx\_b tx\_c)
     loop
-        select\!
+        select
             \# Ramo de receção
             case (\<\! rx\_a) -> valor\_a:
                 echo\! format "Recebido de A: {}" valor\_a
@@ -976,7 +976,7 @@ action multiplexador (rx\_a rx\_b tx\_c)
                 echo\! "Sinal enviado para C"
 
             \# Desbloqueio temporal
-            timeout\! 1000:
+            timeout 1000:
                 echo\! "Inatividade detetada. 1s passado."
 
 ## **Diretivas de Compilação e Runtime**

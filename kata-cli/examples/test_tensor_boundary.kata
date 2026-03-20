@@ -1,6 +1,6 @@
 # Mock de uma função que lê um banco e retorna um Array dinâmico genérico
 ler_banco :: () => Array::Int
-lambda () {10 20 30 40}
+lambda : {10 20 30 40}
 
 action processa_ok (tensor_seguro)
     echo! "Sucesso"

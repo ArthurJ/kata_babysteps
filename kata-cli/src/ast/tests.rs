@@ -405,7 +405,7 @@ mod expr_tests {
             vec![Pattern::var("x"), Pattern::var("y")],
             Expr::apply(Expr::var("+"), vec![Expr::var("x"), Expr::var("y")]),
         );
-        assert_eq!(clause.to_string(), "(x y): + x y");
+        assert_eq!(clause.to_string(), "x y: + x y");
     }
 }
 
@@ -418,13 +418,13 @@ mod stmt_tests {
 
     #[test]
     fn test_stmt_let() {
-        let s = Stmt::let_binding("x", Expr::literal(Literal::int("42")));
+        let s = Stmt::let_simple("x", Expr::literal(Literal::int("42")));
         assert_eq!(s.to_string(), "let x 42");
     }
 
     #[test]
     fn test_stmt_var() {
-        let s = Stmt::var_binding("counter", Expr::literal(Literal::int("0")));
+        let s = Stmt::var_simple("counter", Expr::literal(Literal::int("0")));
         assert_eq!(s.to_string(), "var counter 0");
     }
 
@@ -458,7 +458,7 @@ mod stmt_tests {
     #[test]
     fn test_stmt_loop() {
         let s = Stmt::loop_stmt(vec![
-            Stmt::let_binding("x", Expr::literal(Literal::int("1"))),
+            Stmt::let_simple("x", Expr::literal(Literal::int("1"))),
         ]);
         assert!(s.to_string().contains("loop"));
     }

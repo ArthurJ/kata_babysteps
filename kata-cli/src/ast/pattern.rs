@@ -44,6 +44,13 @@ pub enum Pattern {
     /// Examples: `{a, b, c}`
     Array(Vec<Pattern>),
 
+    /// Cons pattern (head:tail for lists)
+    /// Example: `x:xs`
+    Cons {
+        head: Box<Pattern>,
+        tail: Box<Pattern>,
+    },
+
     /// Constructor/Variant pattern (for enums)
     /// Examples: `Ok(x)`, `Err(e)`, `Some(value)`, `None`
     Variant {
@@ -126,6 +133,7 @@ impl Pattern {
                     || rest.as_ref().map_or(false, |r| r.captures_variables())
             }
             Pattern::Array(patterns) => patterns.iter().any(|p| p.captures_variables()),
+            Pattern::Cons { head, tail } => head.captures_variables() || tail.captures_variables(),
             Pattern::Variant { args, .. } => args.iter().any(|p| p.captures_variables()),
             Pattern::Or(patterns) => patterns.iter().any(|p| p.captures_variables()),
             Pattern::Guarded { pattern, .. } => pattern.captures_variables(),
@@ -161,6 +169,10 @@ impl Pattern {
                 for p in patterns {
                     p.collect_variables(vars);
                 }
+            }
+            Pattern::Cons { head, tail } => {
+                head.collect_variables(vars);
+                tail.collect_variables(vars);
             }
             Pattern::Variant { args, .. } => {
                 for p in args {
@@ -216,6 +228,9 @@ impl fmt::Display for Pattern {
                     write!(f, "{}", p)?;
                 }
                 write!(f, "}}")
+            }
+            Pattern::Cons { head, tail } => {
+                write!(f, "{}:{}", head, tail)
             }
             Pattern::Variant { name, args } => {
                 write!(f, "{}", name)?;

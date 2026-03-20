@@ -2,8 +2,8 @@
 # Introspecção, Tipos, Global Implements e Templates (format)
 
 data Config
-    host: Text
-    port: Int
+    host::Text
+    port::Int
 
 # Implementando a interface SHOW globalmente para Config
 Config implements SHOW

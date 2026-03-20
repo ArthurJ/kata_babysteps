@@ -1,12 +1,12 @@
-max :: (Int Int) => Int
-lambda (x y)
+max :: Int Int => Int
+lambda x y:
     maior: x
     otherwise: y
     with
         maior as > x y
 
-min :: (Int Int) => Int
-lambda (x y)
+min :: Int Int => Int
+lambda x y:
     menor: x
     otherwise: y
     with

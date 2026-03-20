@@ -1,15 +1,15 @@
 # Teste simples de operacoes com float
 
 multiplica :: Float Float => Float
-lambda (a b)
+lambda a b:
     * a b
 
 soma :: Float Float => Float
-lambda (a b)
+lambda a b:
     + a b
 
 compara :: Float Float => Bool
-lambda (a b)
+lambda a b:
     > a b
 
 action main

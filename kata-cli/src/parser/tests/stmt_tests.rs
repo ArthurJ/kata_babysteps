@@ -19,8 +19,8 @@ fn test_let_binding() {
     let result = parse_stmt("let x 42");
     assert!(result.is_ok());
     match result.unwrap() {
-        Stmt::Let { name, value: _ } => {
-            assert_eq!(name.0, "x");
+        Stmt::Let { pattern, value: _ } => {
+            assert_eq!(pattern.to_string(), "x");
         }
         _ => panic!("Expected let binding"),
     }
@@ -31,8 +31,8 @@ fn test_var_binding() {
     let result = parse_stmt("var counter 0");
     assert!(result.is_ok());
     match result.unwrap() {
-        Stmt::Var { name, value: _ } => {
-            assert_eq!(name.0, "counter");
+        Stmt::Var { pattern, value: _ } => {
+            assert_eq!(pattern.to_string(), "counter");
         }
         _ => panic!("Expected var binding"),
     }
