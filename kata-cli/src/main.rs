@@ -112,7 +112,7 @@ fn main() {
                             }
                             Err(e) => {
                                 eprintln!("=== TYPE ERRORS ===\n");
-                                eprintln!("  {}", e);
+                                report_type_error(e, &source, input_file.to_str().unwrap_or("unknown.kata"));
                                 std::process::exit(1);
                             }
                         }
@@ -133,6 +133,41 @@ fn main() {
             }
         }
     }
+}
+
+use ariadne::{Report, ReportKind, Label, Source, Color};
+
+/// Reports a type error beautifully using ariadne
+fn report_type_error(e: kata::type_checker::error::TypeError, source: &str, filename: &str) {
+    let span = match &e {
+        kata::type_checker::error::TypeError::TypeMismatch { span, .. } => span,
+        kata::type_checker::error::TypeError::InfiniteType { span, .. } => span,
+        kata::type_checker::error::TypeError::UnboundVariable { span, .. } => span,
+        kata::type_checker::error::TypeError::NoMatchingDispatch { span, .. } => span,
+        kata::type_checker::error::TypeError::AmbiguousDispatch { span, .. } => span,
+        kata::type_checker::error::TypeError::ImpureCallInPureContext { span, .. } => span,
+        kata::type_checker::error::TypeError::OrphanRuleViolation { span, .. } => span,
+        kata::type_checker::error::TypeError::ArityMismatch { span, .. } => span,
+    };
+
+    // Fallback if span is a dummy span (0..0) to avoid crashing Ariadne
+    let ariadne_span = if span.start == 0 && span.end == 0 {
+        0..1
+    } else {
+        span.start..span.end
+    };
+
+    Report::build(ReportKind::Error, (filename, ariadne_span.clone()))
+        .with_message(e.to_string())
+        .with_label(
+            Label::new((filename, ariadne_span))
+                .with_message("Type error originated here")
+                .with_color(Color::Red),
+        )
+        .with_note("Please check the function signature, generic variables, or interface constraints.")
+        .finish()
+        .print((filename, Source::from(source)))
+        .unwrap();
 }
 
 /// Dump the AST from the parser
