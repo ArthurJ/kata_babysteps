@@ -147,6 +147,7 @@ fn report_type_error(e: kata::type_checker::error::TypeError, source: &str, file
         kata::type_checker::error::TypeError::AmbiguousDispatch { span, .. } => span,
         kata::type_checker::error::TypeError::ImpureCallInPureContext { span, .. } => span,
         kata::type_checker::error::TypeError::OrphanRuleViolation { span, .. } => span,
+        kata::type_checker::error::TypeError::CyclicInheritance { span, .. } => span,
         kata::type_checker::error::TypeError::ArityMismatch { span, .. } => span,
     };
 

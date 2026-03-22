@@ -53,10 +53,16 @@ pub enum TypeError {
         interface_name: String,
         span: Span,
     },
-    
+
+    /// Cyclic Interface Inheritance
+    CyclicInheritance {
+        interface_name: String,
+        cycle_path: Vec<String>,
+        span: Span,
+    },
+
     /// Arity mismatch: Function called with wrong number of arguments
-    ArityMismatch {
-        expected: usize,
+    ArityMismatch {        expected: usize,
         found: usize,
         span: Span,
     },
@@ -87,6 +93,9 @@ impl fmt::Display for TypeError {
             }
             TypeError::OrphanRuleViolation { type_name, interface_name, .. } => {
                 write!(f, "Orphan Rule Violation: cannot implement foreign interface `{}` for foreign type `{}`", interface_name, type_name)
+            }
+            TypeError::CyclicInheritance { interface_name, cycle_path, .. } => {
+                write!(f, "Cyclic Interface Inheritance detected for `{}`: {}", interface_name, cycle_path.join(" -> "))
             }
             TypeError::ArityMismatch { expected, found, .. } => {
                 write!(f, "Arity Mismatch: expected {} arguments, but found {}", expected, found)

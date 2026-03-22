@@ -244,6 +244,44 @@ impl Checker {
         Ok(())
     }
 
+    fn check_interface_cycles(&self) -> Result<(), TypeError> {
+        let mut visited = std::collections::HashSet::new();
+        for name in self.env.interfaces.keys() {
+            if !visited.contains(name) {
+                let mut path = Vec::new();
+                self.detect_cycle(name, &mut visited, &mut path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn detect_cycle(&self, current: &str, visited: &mut std::collections::HashSet<String>, path: &mut Vec<String>) -> Result<(), TypeError> {
+        if path.contains(&current.to_string()) {
+            // Find where the cycle starts in the path
+            let start_idx = path.iter().position(|x| x == current).unwrap_or(0);
+            let mut cycle = path[start_idx..].to_vec();
+            cycle.push(current.to_string());
+            return Err(TypeError::CyclicInheritance {
+                interface_name: current.to_string(),
+                cycle_path: cycle,
+                span: crate::lexer::Span { start: 0, end: 0 }, // We can enhance the AST to store the span later
+            });
+        }
+        
+        path.push(current.to_string());
+
+        if let Some(info) = self.env.interfaces.get(current) {
+            for parent in &info.extends {
+                self.detect_cycle(parent, visited, path)?;
+            }
+        }
+
+        path.pop();
+        visited.insert(current.to_string());
+        
+        Ok(())
+    }
+
     /// Entry point for type checking a whole module.
     /// Takes a list of top-level declarations that have already been
     /// topologically sorted and tree-shaken by the DAG.
@@ -255,6 +293,9 @@ impl Checker {
         for decl in &sorted_decls {
             self.register_global_signature(&decl.node)?;
         }
+
+        // Validate interface hierarchy for cycles
+        self.check_interface_cycles()?;
 
         // Second pass: Actually type check the bodies
         for decl in sorted_decls {
