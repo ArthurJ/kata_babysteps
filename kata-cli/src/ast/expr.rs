@@ -6,6 +6,7 @@
 use super::id::{Ident, Literal, QualifiedIdent};
 use super::pattern::Pattern;
 use super::types::Type;
+use super::Spanned;
 use std::fmt;
 
 // =============================================================================
@@ -31,71 +32,71 @@ pub enum Expr {
 
     // === Collections ===
     /// Tuple expression: `(1 2 3)` or `(a, b, c)`
-    Tuple(Vec<Expr>),
+    Tuple(Vec<Spanned<Expr>>),
 
     /// List expression: `[1, 2, 3]`
-    List(Vec<Expr>),
+    List(Vec<Spanned<Expr>>),
 
     /// Cons expression (head:tail for lists)
     /// Example: `x : xs`
     Cons {
-        head: Box<Expr>,
-        tail: Box<Expr>,
+        head: Box<Spanned<Expr>>,
+        tail: Box<Spanned<Expr>>,
     },
 
     /// Array expression: `{1, 2, 3}`
-    Array(Vec<Expr>),
+    Array(Vec<Spanned<Expr>>),
 
     /// Tensor expression: `{1 2 ; 3 4}` (matrix with dimension separator)
     Tensor {
         dimensions: Vec<usize>,
-        elements: Vec<Expr>,
+        elements: Vec<Spanned<Expr>>,
     },
 
     /// Range expression: `[1..10]`, `[1..2..100]`, `[1..=10]`
     Range {
-        start: Box<Expr>,
-        end: Box<Expr>,
-        step: Option<Box<Expr>>,
+        start: Box<Spanned<Expr>>,
+        end: Box<Spanned<Expr>>,
+        step: Option<Box<Spanned<Expr>>>,
         inclusive: bool,
     },
 
     /// Dictionary expression: `Dict [("chave" "valor")]`
-    Dict(Vec<(Expr, Expr)>),
+    Dict(Vec<(Spanned<Expr>, Spanned<Expr>)>),
 
     /// Set expression: `Set [1, 2, 3]`
-    Set(Vec<Expr>),
+    Set(Vec<Spanned<Expr>>),
 
     // === Function Application ===
     /// Function application (prefix notation): `+ 1 2`, `f x y`
     Apply {
-        func: Box<Expr>,
-        args: Vec<Expr>,
+        func: Box<Spanned<Expr>>,
+        args: Vec<Spanned<Expr>>,
     },
 
     /// Explicit application with `$`: `$(+ 1 2)`
     ExplicitApply {
-        func: Box<Expr>,
-        args: Vec<Expr>,
+        func: Box<Spanned<Expr>>,
+        args: Vec<Spanned<Expr>>,
     },
 
     /// Method call: `obj.method arg1 arg2`
     Method {
-        object: Box<Expr>,
+        object: Box<Spanned<Expr>>,
         method: Ident,
-        args: Vec<Expr>,
+        args: Vec<Spanned<Expr>>,
     },
 
     /// Field access: `obj.field`
     Field {
-        object: Box<Expr>,
+        object: Box<Spanned<Expr>>,
         field: Ident,
     },
 
     /// Index access: `arr .at i` or `list i`
     Index {
-        object: Box<Expr>,
-        index: Box<Expr>,
+        object: Box<Spanned<Expr>>,
+        index: Box<Spanned<Expr>>,
     },
 
     // === Lambda and Functions ===
@@ -110,8 +111,8 @@ pub enum Expr {
     // === Control Flow (Pure) ===
     /// Pipeline: `expr |> f`
     Pipeline {
-        value: Box<Expr>,
-        func: Box<Expr>,
+        value: Box<Spanned<Expr>>,
+        func: Box<Spanned<Expr>>,
     },
 
     /// Conditional expression via pattern matching (in lambda)
@@ -121,17 +122,17 @@ pub enum Expr {
     /// Type cast/coercion: `Int x`
     TypeCast {
         type_name: QualifiedIdent,
-        value: Box<Expr>,
+        value: Box<Spanned<Expr>>,
     },
 
     // === Special Forms ===
     /// Block expression (sequence of expressions, last one is the value)
-    Block(Vec<Expr>),
+    Block(Vec<Spanned<Expr>>),
 
     /// With block: `with bindings...`
     /// Used for guards and type constraints
     WithBlock {
-        body: Box<Expr>,
+        body: Box<Spanned<Expr>>,
         bindings: Vec<WithBinding>,
     },
 }
@@ -140,58 +141,6 @@ impl Expr {
     /// Create a literal expression
     pub fn literal(lit: Literal) -> Self {
         Expr::Literal(lit)
-    }
-
-    /// Create a variable reference
-    pub fn var(name: impl Into<String>) -> Self {
-        Expr::Var {
-            name: Ident::new(name),
-            type_ascription: None,
-        }
-    }
-
-    /// Create a typed variable reference
-    pub fn var_typed(name: impl Into<String>, typ: Type) -> Self {
-        Expr::Var {
-            name: Ident::new(name),
-            type_ascription: Some(typ),
-        }
-    }
-
-    /// Create a tuple expression
-    pub fn tuple(exprs: Vec<Expr>) -> Self {
-        Expr::Tuple(exprs)
-    }
-
-    /// Create a list expression
-    pub fn list(exprs: Vec<Expr>) -> Self {
-        Expr::List(exprs)
-    }
-
-    /// Create an array expression
-    pub fn array(exprs: Vec<Expr>) -> Self {
-        Expr::Array(exprs)
-    }
-
-    /// Create a function application
-    pub fn apply(func: Expr, args: Vec<Expr>) -> Self {
-        Expr::Apply {
-            func: Box::new(func),
-            args,
-        }
-    }
-
-    /// Create a hole expression
-    pub fn hole() -> Self {
-        Expr::Hole
-    }
-
-    /// Create a pipeline expression
-    pub fn pipeline(value: Expr, func: Expr) -> Self {
-        Expr::Pipeline {
-            value: Box::new(value),
-            func: Box::new(func),
-        }
     }
 
     /// Check if this is a literal
@@ -227,7 +176,7 @@ impl fmt::Display for Expr {
                     if i > 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "{}", e)?;
+                    write!(f, "{}", e.node)?;
                 }
                 write!(f, ")")
             }
@@ -237,12 +186,12 @@ impl fmt::Display for Expr {
                     if i > 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "{}", e)?;
+                    write!(f, "{}", e.node)?;
                 }
                 write!(f, "]")
             }
             Expr::Cons { head, tail } => {
-                write!(f, "{} : {}", head, tail)
+                write!(f, "{} : {}", head.node, tail.node)
             }
             Expr::Array(exprs) => {
                 write!(f, "{{")?;
@@ -250,7 +199,7 @@ impl fmt::Display for Expr {
                     if i > 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "{}", e)?;
+                    write!(f, "{}", e.node)?;
                 }
                 write!(f, "}}")
             }
@@ -266,21 +215,21 @@ impl fmt::Display for Expr {
                             write!(f, " ")?;
                         }
                     }
-                    write!(f, "{}", e)?;
+                    write!(f, "{}", e.node)?;
                 }
                 write!(f, "}}")
             }
             Expr::Range { start, end, step, inclusive } => {
-                write!(f, "[{}", start)?;
+                write!(f, "[{}", start.node)?;
                 if let Some(s) = step {
-                    write!(f, "..{}..", s)?;
+                    write!(f, "..{}..", s.node)?;
                 } else {
                     write!(f, "..")?;
                 }
                 if *inclusive {
                     write!(f, "=")?;
                 }
-                write!(f, "{}]", end)
+                write!(f, "{}]", end.node)
             }
             Expr::Dict(entries) => {
                 write!(f, "Dict [")?;
@@ -288,7 +237,7 @@ impl fmt::Display for Expr {
                     if i > 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "({} {})", k, v)?;
+                    write!(f, "({} {})", k.node, v.node)?;
                 }
                 write!(f, "]")
             }
@@ -298,36 +247,36 @@ impl fmt::Display for Expr {
                     if i > 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "{}", e)?;
+                    write!(f, "{}", e.node)?;
                 }
                 write!(f, "]")
             }
             Expr::Apply { func, args } => {
-                write!(f, "{}", func)?;
+                write!(f, "{}", func.node)?;
                 for arg in args {
-                    write!(f, " {}", arg)?;
+                    write!(f, " {}", arg.node)?;
                 }
                 Ok(())
             }
             Expr::ExplicitApply { func, args } => {
-                write!(f, "$({}", func)?;
+                write!(f, "$({}", func.node)?;
                 for arg in args {
-                    write!(f, " {}", arg)?;
+                    write!(f, " {}", arg.node)?;
                 }
                 write!(f, ")")
             }
             Expr::Method { object, method, args } => {
-                write!(f, "{}.{}", object, method)?;
+                write!(f, "{}.{}", object.node, method)?;
                 for arg in args {
-                    write!(f, " {}", arg)?;
+                    write!(f, " {}", arg.node)?;
                 }
                 Ok(())
             }
             Expr::Field { object, field } => {
-                write!(f, "{}.{}", object, field)
+                write!(f, "{}.{}", object.node, field)
             }
             Expr::Index { object, index } => {
-                write!(f, "({} .at {})", object, index)
+                write!(f, "({} .at {})", object.node, index.node)
             }
             Expr::Lambda { clauses } => {
                 write!(f, "λ ")?;
@@ -341,23 +290,23 @@ impl fmt::Display for Expr {
             }
             Expr::Hole => write!(f, "_"),
             Expr::Pipeline { value, func } => {
-                write!(f, "{} |>", value)?;
-                write!(f, " {}", func)
+                write!(f, "{} |>", value.node)?;
+                write!(f, " {}", func.node)
             }
             Expr::TypeCast { type_name, value } => {
-                write!(f, "{} {}", type_name, value)
+                write!(f, "{} {}", type_name, value.node)
             }
             Expr::Block(exprs) => {
                 for (i, e) in exprs.iter().enumerate() {
                     if i > 0 {
                         write!(f, "\n")?;
                     }
-                    write!(f, "{}", e)?;
+                    write!(f, "{}", e.node)?;
                 }
                 Ok(())
             }
             Expr::WithBlock { body, bindings } => {
-                write!(f, "{}", body)?;
+                write!(f, "{}", body.node)?;
                 write!(f, "\n    with")?;
                 for b in bindings {
                     write!(f, "\n        {}", b)?;
@@ -392,18 +341,18 @@ impl fmt::Display for Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LambdaClause {
     /// Patterns to match arguments
-    pub patterns: Vec<Pattern>,
+    pub patterns: Vec<Spanned<Pattern>>,
     /// Guard conditions (optional)
     pub guards: Vec<GuardClause>,
     /// Body expression (optional if guards are present)
-    pub body: Option<Expr>,
+    pub body: Option<Spanned<Expr>>,
     /// Bindings for guards (optional)
     /// Used for both value bindings and type constraints
     pub with: Vec<WithBinding>,
 }
 
 impl LambdaClause {
-    pub fn new(patterns: Vec<Pattern>, body: Expr) -> Self {
+    pub fn new(patterns: Vec<Spanned<Pattern>>, body: Spanned<Expr>) -> Self {
         LambdaClause {
             patterns,
             guards: vec![],
@@ -412,7 +361,7 @@ impl LambdaClause {
         }
     }
 
-    pub fn with_guards(patterns: Vec<Pattern>, guards: Vec<GuardClause>, body: Option<Expr>) -> Self {
+    pub fn with_guards(patterns: Vec<Spanned<Pattern>>, guards: Vec<GuardClause>, body: Option<Spanned<Expr>>) -> Self {
         LambdaClause {
             patterns,
             guards,
@@ -421,7 +370,7 @@ impl LambdaClause {
         }
     }
 
-    pub fn with_bindings(patterns: Vec<Pattern>, guards: Vec<GuardClause>, body: Option<Expr>, with: Vec<WithBinding>) -> Self {
+    pub fn with_bindings(patterns: Vec<Spanned<Pattern>>, guards: Vec<GuardClause>, body: Option<Spanned<Expr>>, with: Vec<WithBinding>) -> Self {
         LambdaClause {
             patterns,
             guards,
@@ -437,16 +386,16 @@ impl fmt::Display for LambdaClause {
             if i > 0 {
                 write!(f, " ")?;
             }
-            write!(f, "{}", p)?;
+            write!(f, "{}", p.node)?;
         }
         write!(f, ":")?;
         
         if !self.guards.is_empty() {
             for guard in &self.guards {
-                write!(f, "\n    {}: {}", guard.label, guard.body)?;
+                write!(f, "\n    {}: {}", guard.label, guard.body.node)?;
             }
         } else if let Some(ref body) = self.body {
-            write!(f, " {}", body)?;
+            write!(f, " {}", body.node)?;
         }
 
         if !self.with.is_empty() {
@@ -480,7 +429,7 @@ pub struct GuardClause {
     /// Guard condition (or "otherwise")
     pub guard: GuardCondition,
     /// Body expression for this guard
-    pub body: Expr,
+    pub body: Spanned<Expr>,
 }
 
 /// Guard condition
@@ -520,7 +469,7 @@ pub enum WithBinding {
     /// Value binding: `name as expr`
     Value {
         name: Ident,
-        value: Expr,
+        value: Spanned<Expr>,
     },
     /// Signature constraint: `+ :: A B => C`
     Signature {
@@ -537,62 +486,9 @@ pub enum WithBinding {
 impl fmt::Display for WithBinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            WithBinding::Value { name, value } => write!(f, "{} as {}", name, value),
+            WithBinding::Value { name, value } => write!(f, "{} as {}", name, value.node),
             WithBinding::Signature { name, sig } => write!(f, "{} :: {}", name, sig),
             WithBinding::Interface { typ, interface } => write!(f, "{} implements {}", typ, interface),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_literal_expr() {
-        let expr = Expr::literal(Literal::int("42"));
-        assert_eq!(expr.to_string(), "42");
-        assert!(expr.is_literal());
-    }
-
-    #[test]
-    fn test_var_expr() {
-        let expr = Expr::var("x");
-        assert_eq!(expr.to_string(), "x");
-        assert!(expr.is_var());
-    }
-
-    #[test]
-    fn test_apply_expr() {
-        let expr = Expr::apply(
-            Expr::var("+"),
-            vec![Expr::literal(Literal::int("1")), Expr::literal(Literal::int("2"))],
-        );
-        assert_eq!(expr.to_string(), "+ 1 2");
-    }
-
-    #[test]
-    fn test_pipeline_expr() {
-        let expr = Expr::pipeline(
-            Expr::list(vec![Expr::literal(Literal::int("1")), Expr::literal(Literal::int("2"))]),
-            Expr::var("map"),
-        );
-        assert_eq!(expr.to_string(), "[1 2] |> map");
-    }
-
-    #[test]
-    fn test_tuple_expr() {
-        let expr = Expr::tuple(vec![
-            Expr::literal(Literal::int("1")),
-            Expr::literal(Literal::int("2")),
-        ]);
-        assert_eq!(expr.to_string(), "(1 2)");
-    }
-
-    #[test]
-    fn test_hole_expr() {
-        let expr = Expr::hole();
-        assert!(expr.is_hole());
-        assert_eq!(expr.to_string(), "_");
-    }
-}
+        }
+        }

@@ -299,6 +299,11 @@ impl FunctionSig {
     pub fn arity(&self) -> usize {
         self.params.len()
     }
+
+    /// Convert the signature to a function type
+    pub fn to_type(&self) -> Type {
+        Type::function(self.params.clone(), self.return_type.clone())
+    }
 }
 
 impl fmt::Display for FunctionSig {
@@ -314,62 +319,5 @@ impl fmt::Display for FunctionSig {
             }
             write!(f, " => {}", self.return_type)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_simple_type() {
-        let int = Type::named("Int");
-        assert!(int.is_simple());
-        assert_eq!(int.to_string(), "Int");
-    }
-
-    #[test]
-    fn test_generic_type() {
-        let optional_int = Type::generic("Optional", vec![Type::named("Int")]);
-        assert_eq!(optional_int.to_string(), "Optional::Int");
-    }
-
-    #[test]
-    fn test_type_variable() {
-        let t = Type::var("T");
-        assert!(t.is_var());
-        assert_eq!(t.to_string(), "T");
-    }
-
-    #[test]
-    fn test_function_type() {
-        let func = Type::function(
-            vec![Type::named("Int"), Type::named("Int")],
-            Type::named("Int"),
-        );
-        assert_eq!(func.to_string(), "(Int Int) -> Int");
-    }
-
-    #[test]
-    fn test_function_sig() {
-        let sig = FunctionSig::binary(
-            Type::named("Int"),
-            Type::named("Int"),
-            Type::named("Int"),
-        );
-        assert_eq!(sig.arity(), 2);
-        assert_eq!(sig.to_string(), "Int Int => Int");
-    }
-
-    #[test]
-    fn test_refined_type() {
-        let refined = Type::refined(
-            Type::named("Int"),
-            Predicate::Comparison {
-                op: CompareOp::Gt,
-                value: LiteralValue::Int(0),
-            },
-        );
-        assert_eq!(refined.to_string(), "(Int, > _ 0)");
     }
 }

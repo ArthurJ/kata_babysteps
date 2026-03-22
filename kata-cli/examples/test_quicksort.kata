@@ -1,7 +1,7 @@
 quicksort :: [Int] => [Int]
 lambda []: []
-lambda (pivo:resto):
-    Cons (quicksort menores) (Cons pivo (quicksort maiores))
+lambda [pivo:resto]:
+    [quicksort menores : [pivo : quicksort maiores]]
     with
         menores as filter $(< _ pivo) resto
         maiores as filter $(>= _ pivo) resto

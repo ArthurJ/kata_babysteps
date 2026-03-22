@@ -115,38 +115,3 @@ impl ErrorCollector {
         &self.errors
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_error_creation() {
-        let error = ParseError::new("Expected expression", Span::new(10, 15));
-        assert_eq!(error.message, "Expected expression");
-        assert_eq!(error.span, Span::new(10, 15));
-    }
-
-    #[test]
-    fn test_expected_found() {
-        let error = ParseError::expected_found(
-            vec!["identifier".to_string(), "literal".to_string()],
-            Some("+".to_string()),
-            Span::new(5, 6),
-        );
-        assert!(error.message.contains("identifier or literal"));
-        assert!(error.message.contains("'+'"));
-    }
-
-    #[test]
-    fn test_error_collector() {
-        let mut collector = ErrorCollector::new();
-        assert!(!collector.has_errors());
-
-        collector.add(ParseError::new("Error 1", Span::new(0, 1)));
-        collector.add(ParseError::new("Error 2", Span::new(5, 6)));
-
-        assert!(collector.has_errors());
-        assert_eq!(collector.errors().len(), 2);
-    }
-}

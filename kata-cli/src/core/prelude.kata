@@ -6,7 +6,7 @@ import types.(SHOW HASH EQ ORD)
 import types.(NUM Float Int and or xor not)
 
 import io.(echo)
-import csp.(fork queue broadcast !> <!)
+import csp.(fork queue broadcast)
 
 # FFI para map usando KataClosure
 # Recebe uma closure e uma lista, retorna nova lista mapeada

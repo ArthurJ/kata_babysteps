@@ -2,20 +2,13 @@
 
 # 1. A criação das *Green Threads* em M:N
 @ffi("kata_rt_fork")
-fork! :: Action => ()
+action fork(Action)
 
 # 2. Infraestrutura de Canais
 @ffi("kata_rt_chan_create_queue")
-queue! :: Int => (Tx Rx)
+action queue(Int) => (Tx Rx)
 
 @ffi("kata_rt_chan_create_broadcast")
-broadcast! :: () => (Tx Rx)
+action broadcast => (Tx Rx)
 
-# 3. Operadores de Tráfego de Mensagens
-@ffi("kata_rt_chan_send")
-!> :: Tx T => Bool
-
-@ffi("kata_rt_chan_recv")
-<! :: Rx => T
-
-export fork queue broadcast >! <!
+export fork queue broadcast

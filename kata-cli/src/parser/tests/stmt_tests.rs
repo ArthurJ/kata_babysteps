@@ -1,6 +1,7 @@
 //! Unit tests for statement parser
 
 use chumsky::Parser;
+use crate::ast::Spanned;
 use crate::ast::stmt::Stmt;
 use crate::lexer::KataLexer;
 use crate::parser::common::convert_result;
@@ -11,7 +12,7 @@ use crate::parser::stmt::statement;
 fn parse_stmt(source: &str) -> Result<Stmt, Vec<ParseError>> {
     let tokens = KataLexer::lex_with_indent(source)
         .map_err(|e| e.into_iter().map(|e| ParseError::new(e.to_string(), e.span().clone())).collect::<Vec<_>>())?;
-    convert_result(statement(expression()).parse(tokens))
+    convert_result(statement(expression()).parse(tokens).map(|s| s.node))
 }
 
 #[test]
@@ -20,7 +21,7 @@ fn test_let_binding() {
     assert!(result.is_ok());
     match result.unwrap() {
         Stmt::Let { pattern, value: _ } => {
-            assert_eq!(pattern.to_string(), "x");
+            assert_eq!(pattern.node.to_string(), "x");
         }
         _ => panic!("Expected let binding"),
     }
@@ -32,7 +33,7 @@ fn test_var_binding() {
     assert!(result.is_ok());
     match result.unwrap() {
         Stmt::Var { pattern, value: _ } => {
-            assert_eq!(pattern.to_string(), "counter");
+            assert_eq!(pattern.node.to_string(), "counter");
         }
         _ => panic!("Expected var binding"),
     }

@@ -7,6 +7,7 @@
 
 use super::id::{Ident, Literal};
 use super::types::Type;
+use super::Spanned;
 use std::fmt;
 
 // =============================================================================
@@ -31,48 +32,48 @@ pub enum Pattern {
 
     /// Tuple pattern (destructuring)
     /// Examples: `(a b c)`, `(x y)`
-    Tuple(Vec<Pattern>),
+    Tuple(Vec<Spanned<Pattern>>),
 
     /// List pattern (destructuring)
     /// Examples: `[head, ...tail]`, `[a, b, c]`, `[]`
     List {
-        elements: Vec<Pattern>,
-        rest: Option<Box<Pattern>>,
+        elements: Vec<Spanned<Pattern>>,
+        rest: Option<Box<Spanned<Pattern>>>,
     },
 
     /// Array pattern (similar to list but for Array type)
     /// Examples: `{a, b, c}`
-    Array(Vec<Pattern>),
+    Array(Vec<Spanned<Pattern>>),
 
     /// Cons pattern (head:tail for lists)
     /// Example: `x:xs`
     Cons {
-        head: Box<Pattern>,
-        tail: Box<Pattern>,
+        head: Box<Spanned<Pattern>>,
+        tail: Box<Spanned<Pattern>>,
     },
 
     /// Constructor/Variant pattern (for enums)
     /// Examples: `Ok(x)`, `Err(e)`, `Some(value)`, `None`
     Variant {
         name: Ident,
-        args: Vec<Pattern>,
+        args: Vec<Spanned<Pattern>>,
     },
 
     /// Or pattern (multiple alternatives)
     /// Example: `A | B | C`
-    Or(Vec<Pattern>),
+    Or(Vec<Spanned<Pattern>>),
 
     /// Guarded pattern (pattern with condition)
     /// Example: `n where > n 0`
     Guarded {
-        pattern: Box<Pattern>,
-        condition: Box<Pattern>, // Simplified - could be Expr
+        pattern: Box<Spanned<Pattern>>,
+        condition: Box<Spanned<Pattern>>, // Simplified - could be Expr
     },
 
     /// Type constraint pattern (pattern with type annotation)
     /// Example: `x::Int`
     Typed {
-        pattern: Box<Pattern>,
+        pattern: Box<Spanned<Pattern>>,
         type_annotation: Type,
     },
 
@@ -101,43 +102,22 @@ impl Pattern {
         Pattern::Wildcard
     }
 
-    /// Create a tuple pattern
-    pub fn tuple(patterns: Vec<Pattern>) -> Self {
-        Pattern::Tuple(patterns)
-    }
-
-    /// Create a variant pattern (for enums)
-    pub fn variant(name: impl Into<String>, args: Vec<Pattern>) -> Self {
-        Pattern::Variant {
-            name: Ident::new(name),
-            args,
-        }
-    }
-
-    /// Create an empty list pattern
-    pub fn empty_list() -> Self {
-        Pattern::List {
-            elements: Vec::new(),
-            rest: None,
-        }
-    }
-
     /// Check if this pattern captures any variables
     pub fn captures_variables(&self) -> bool {
         match self {
             Pattern::Var(_) => true,
             Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => false,
-            Pattern::Tuple(patterns) => patterns.iter().any(|p| p.captures_variables()),
+            Pattern::Tuple(patterns) => patterns.iter().any(|p| p.node.captures_variables()),
             Pattern::List { elements, rest } => {
-                elements.iter().any(|p| p.captures_variables())
-                    || rest.as_ref().map_or(false, |r| r.captures_variables())
+                elements.iter().any(|p| p.node.captures_variables())
+                    || rest.as_ref().map_or(false, |r| r.node.captures_variables())
             }
-            Pattern::Array(patterns) => patterns.iter().any(|p| p.captures_variables()),
-            Pattern::Cons { head, tail } => head.captures_variables() || tail.captures_variables(),
-            Pattern::Variant { args, .. } => args.iter().any(|p| p.captures_variables()),
-            Pattern::Or(patterns) => patterns.iter().any(|p| p.captures_variables()),
-            Pattern::Guarded { pattern, .. } => pattern.captures_variables(),
-            Pattern::Typed { pattern, .. } => pattern.captures_variables(),
+            Pattern::Array(patterns) => patterns.iter().any(|p| p.node.captures_variables()),
+            Pattern::Cons { head, tail } => head.node.captures_variables() || tail.node.captures_variables(),
+            Pattern::Variant { args, .. } => args.iter().any(|p| p.node.captures_variables()),
+            Pattern::Or(patterns) => patterns.iter().any(|p| p.node.captures_variables()),
+            Pattern::Guarded { pattern, .. } => pattern.node.captures_variables(),
+            Pattern::Typed { pattern, .. } => pattern.node.captures_variables(),
         }
     }
 
@@ -154,38 +134,38 @@ impl Pattern {
             Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => {}
             Pattern::Tuple(patterns) => {
                 for p in patterns {
-                    p.collect_variables(vars);
+                    p.node.collect_variables(vars);
                 }
             }
             Pattern::List { elements, rest } => {
                 for p in elements {
-                    p.collect_variables(vars);
+                    p.node.collect_variables(vars);
                 }
                 if let Some(r) = rest {
-                    r.collect_variables(vars);
+                    r.node.collect_variables(vars);
                 }
             }
             Pattern::Array(patterns) => {
                 for p in patterns {
-                    p.collect_variables(vars);
+                    p.node.collect_variables(vars);
                 }
             }
             Pattern::Cons { head, tail } => {
-                head.collect_variables(vars);
-                tail.collect_variables(vars);
+                head.node.collect_variables(vars);
+                tail.node.collect_variables(vars);
             }
             Pattern::Variant { args, .. } => {
                 for p in args {
-                    p.collect_variables(vars);
+                    p.node.collect_variables(vars);
                 }
             }
             Pattern::Or(patterns) => {
                 for p in patterns {
-                    p.collect_variables(vars);
+                    p.node.collect_variables(vars);
                 }
             }
-            Pattern::Guarded { pattern, .. } => pattern.collect_variables(vars),
-            Pattern::Typed { pattern, .. } => pattern.collect_variables(vars),
+            Pattern::Guarded { pattern, .. } => pattern.node.collect_variables(vars),
+            Pattern::Typed { pattern, .. } => pattern.node.collect_variables(vars),
         }
     }
 }
@@ -202,7 +182,7 @@ impl fmt::Display for Pattern {
                     if i > 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "{}", p)?;
+                    write!(f, "{}", p.node)?;
                 }
                 write!(f, ")")
             }
@@ -212,10 +192,10 @@ impl fmt::Display for Pattern {
                     if i > 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "{}", p)?;
+                    write!(f, "{}", p.node)?;
                 }
                 if let Some(r) = rest {
-                    write!(f, " ...{}", r)?;
+                    write!(f, " ...{}", r.node)?;
                 }
                 write!(f, "]")
             }
@@ -225,12 +205,12 @@ impl fmt::Display for Pattern {
                     if i > 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "{}", p)?;
+                    write!(f, "{}", p.node)?;
                 }
                 write!(f, "}}")
             }
             Pattern::Cons { head, tail } => {
-                write!(f, "{}:{}", head, tail)
+                write!(f, "{}:{}", head.node, tail.node)
             }
             Pattern::Variant { name, args } => {
                 write!(f, "{}", name)?;
@@ -240,7 +220,7 @@ impl fmt::Display for Pattern {
                         if i > 0 {
                             write!(f, " ")?;
                         }
-                        write!(f, "{}", p)?;
+                        write!(f, "{}", p.node)?;
                     }
                     write!(f, ")")?;
                 }
@@ -251,15 +231,15 @@ impl fmt::Display for Pattern {
                     if i > 0 {
                         write!(f, " | ")?;
                     }
-                    write!(f, "{}", p)?;
+                    write!(f, "{}", p.node)?;
                 }
                 Ok(())
             }
             Pattern::Guarded { pattern, condition } => {
-                write!(f, "{} where {}", pattern, condition)
+                write!(f, "{} where {}", pattern.node, condition.node)
             }
             Pattern::Typed { pattern, type_annotation } => {
-                write!(f, "{}::{}", pattern, type_annotation)
+                write!(f, "{}::{}", pattern.node, type_annotation)
             }
             Pattern::Range { start, end, inclusive } => {
                 if *inclusive {
@@ -305,65 +285,5 @@ impl fmt::Display for Guard {
             Guard::Condition(cond) => write!(f, "{}", cond),
             Guard::Otherwise => write!(f, "otherwise"),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_literal_pattern() {
-        let p = Pattern::literal(Literal::int("42"));
-        assert_eq!(p.to_string(), "42");
-        assert!(!p.captures_variables());
-    }
-
-    #[test]
-    fn test_var_pattern() {
-        let p = Pattern::var("x");
-        assert_eq!(p.to_string(), "x");
-        assert!(p.captures_variables());
-        assert_eq!(p.captured_variables().len(), 1);
-    }
-
-    #[test]
-    fn test_tuple_pattern() {
-        let p = Pattern::tuple(vec![
-            Pattern::var("a"),
-            Pattern::var("b"),
-            Pattern::wildcard(),
-        ]);
-        assert_eq!(p.to_string(), "(a b _)");
-        assert!(p.captures_variables());
-        assert_eq!(p.captured_variables().len(), 2);
-    }
-
-    #[test]
-    fn test_variant_pattern() {
-        let p = Pattern::variant("Ok", vec![Pattern::var("value")]);
-        assert_eq!(p.to_string(), "Ok(value)");
-    }
-
-    #[test]
-    fn test_wildcard_pattern() {
-        let p = Pattern::wildcard();
-        assert_eq!(p.to_string(), "_");
-        assert!(!p.captures_variables());
-    }
-
-    #[test]
-    fn test_or_pattern() {
-        let p = Pattern::Or(vec![
-            Pattern::literal(Literal::int("0")),
-            Pattern::literal(Literal::int("1")),
-        ]);
-        assert_eq!(p.to_string(), "0 | 1");
-    }
-
-    #[test]
-    fn test_guard_display() {
-        assert_eq!(Guard::Otherwise.to_string(), "otherwise");
-        assert_eq!(Guard::Condition(Ident::new("maior")).to_string(), "maior");
     }
 }

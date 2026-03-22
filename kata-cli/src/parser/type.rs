@@ -7,16 +7,12 @@
 //! - Tuple types: (A B C)
 //! - Function types: A -> B, (A B) -> C
 //! - Refined types: (Int, > _ 0)
-//!
-//! Architecture:
-//! - Layer 0: Independent parsers (no recursion needed)
-//! - Layer 1: Self-contained recursive parsers (use recursive() internally)
-//! - Top-level: type_expr() orchestrates everything
 
 use chumsky::prelude::*;
 use crate::lexer::{Token, SpannedToken};
 use crate::ast::id::{Ident, QualifiedIdent};
 use crate::ast::types::{Type, FunctionSig, Predicate, CompareOp, LiteralValue};
+use crate::ast::Spanned;
 use super::common::{ident, token, between, ParserError, ParserSpan};
 
 // ============================================================================
@@ -25,25 +21,21 @@ use super::common::{ident, token, between, ParserError, ParserSpan};
 
 /// Parse a type name (identifier starting with uppercase or qualified)
 fn type_name() -> impl Parser<SpannedToken, QualifiedIdent, Error = ParserError> + Clone {
-    // Single uppercase name
     let simple = filter_map(|_span: ParserSpan, spanned: SpannedToken| {
         match &spanned.token {
             Token::Ident(s) if s.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) => {
-                log::debug!("type_name: simple matched '{}'", s);
                 Ok(QualifiedIdent::simple(s))
             }
             _ => Err(ParserError::custom(_span, "expected type name".to_string())),
         }
     });
 
-    // Qualified name: Module::Item
     let qualified = ident()
         .then(token(Token::DoubleColon).ignore_then(ident()).repeated().at_least(1))
         .map(|(first, rest): (String, Vec<String>)| {
             let all: Vec<_> = std::iter::once(first).chain(rest).collect();
             let name = all.last().unwrap().clone();
             let module = all[..all.len() - 1].join("::");
-            log::debug!("type_name: qualified matched '{}::{}'", module, name);
             QualifiedIdent::qualified(&module, name)
         });
 
@@ -62,118 +54,77 @@ fn type_var() -> impl Parser<SpannedToken, Ident, Error = ParserError> + Clone {
     })
 }
 
-/// Parse a simple named type or type variable
-fn simple_type() -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
-    choice((
-        // Type name (starts with uppercase): Int, Float, Text
-        type_name().map(|name| Type::Named {
-            name,
-            params: vec![],
-        }),
-
-        // Type variable (lowercase): T, K, V
-        type_var().map(Type::Var),
-    ))
-}
-
 /// Parse a generic type with parameters: Name::T::E
-/// Uses recursive() internally for nested generics
-fn generic_type() -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
+fn generic_type() -> impl Parser<SpannedToken, Spanned<Type>, Error = ParserError> + Clone {
     recursive(|arg| {
         type_name()
             .then(token(Token::DoubleColon).ignore_then(type_arg(arg)).repeated())
-            .map(|(name, params): (QualifiedIdent, Vec<Type>)| {
-                if params.is_empty() {
+            .map_with_span(|(name, params): (QualifiedIdent, Vec<Spanned<Type>>), span| {
+                let node = if params.is_empty() {
                     Type::Named { name, params: vec![] }
                 } else {
-                    Type::Named { name, params }
-                }
+                    Type::Named { name, params: params.into_iter().map(|p| p.node).collect() }
+                };
+                Spanned::new(node, span.into())
             })
     })
 }
 
 /// Parse a type argument for generics (recursive)
-/// Takes the recursive parser as parameter
-fn type_arg(arg: Recursive<'_, SpannedToken, Type, ParserError>)
-    -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone + use<'_> {
+fn type_arg(arg: Recursive<'_, SpannedToken, Spanned<Type>, ParserError>)
+    -> impl Parser<SpannedToken, Spanned<Type>, Error = ParserError> + Clone + use<'_> {
     choice((
-        // Nested generic: Name::T
         type_name()
             .then(token(Token::DoubleColon).ignore_then(arg.clone()).repeated())
-            .map(|(name, params): (QualifiedIdent, Vec<Type>)| {
-                Type::Named { name, params }
+            .map_with_span(|(name, params): (QualifiedIdent, Vec<Spanned<Type>>), span| {
+                Spanned::new(Type::Named { name, params: params.into_iter().map(|p| p.node).collect() }, span.into())
             }),
-        // Type variable: T
-        type_var().map(Type::Var),
-        // List Type: [T]
+        type_var().map_with_span(|v, span| Spanned::new(Type::Var(v), span.into())),
         between(
             token(Token::LBracket),
             token(Token::RBracket),
             arg.clone()
-        ).map(|t| Type::Named {
+        ).map_with_span(|t, span| Spanned::new(Type::Named {
             name: QualifiedIdent::simple("List"),
-            params: vec![t]
-        }),
-        // Tuple: (A B) - uses the recursive arg directly, not type_expr_inner
+            params: vec![t.node]
+        }, span.into())),
         between(
             token(Token::LParen),
             token(Token::RParen),
             arg.clone()
                 .then(arg.clone().repeated())
-                .map(|(first, rest): (Type, Vec<Type>)| {
+                .map_with_span(|(first, rest): (Spanned<Type>, Vec<Spanned<Type>>), span| {
                     if rest.is_empty() {
                         first
                     } else {
-                        let mut types = vec![first];
-                        types.extend(rest);
-                        Type::Tuple(types)
+                        let mut types = vec![first.node];
+                        types.extend(rest.into_iter().map(|p| p.node));
+                        Spanned::new(Type::Tuple(types), span.into())
                     }
                 })
         ),
     ))
 }
 
-/// Inner type expression (used for parsing inside parens)
-/// Self-contained with its own recursive()
-fn type_expr_inner() -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
-    recursive(|typ| {
-        let base = choice((
-            list_type_inner(typ.clone()),
-            tuple_type_inner(typ.clone()),
-            generic_type(),
-            type_var().map(Type::Var),
-        ));
-
-        choice((
-            // Function type: base -> base -> ...
-            function_type_inner(base.clone()),
-            // Otherwise just the base
-            base,
-        ))
-    })
-}
-
 // ============================================================================
 // LAYER 1: SELF-CONTAINED RECURSIVE PARSERS
 // ============================================================================
 
-/// Parse a list type: [A]
-fn list_type_inner(type_inner: impl Parser<SpannedToken, Type, Error = ParserError> + Clone + 'static)
-    -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
+fn list_type_inner(type_inner: impl Parser<SpannedToken, Spanned<Type>, Error = ParserError> + Clone + 'static)
+    -> impl Parser<SpannedToken, Spanned<Type>, Error = ParserError> + Clone {
     between(
         token(Token::LBracket),
         token(Token::RBracket),
         type_inner
     )
-    .map(|t| Type::Named {
+    .map_with_span(|t, span| Spanned::new(Type::Named {
         name: QualifiedIdent::simple("List"),
-        params: vec![t]
-    })
+        params: vec![t.node]
+    }, span.into()))
 }
 
-/// Parse a tuple type: (A B C) or (A, B, C)
-fn tuple_type_inner(type_inner: impl Parser<SpannedToken, Type, Error = ParserError> + Clone + 'static)
-    -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
+fn tuple_type_inner(type_inner: impl Parser<SpannedToken, Spanned<Type>, Error = ParserError> + Clone + 'static)
+    -> impl Parser<SpannedToken, Spanned<Type>, Error = ParserError> + Clone {
     let sep = choice((
         token(Token::Comma).ignored(),
         newline().ignored(),
@@ -186,49 +137,45 @@ fn tuple_type_inner(type_inner: impl Parser<SpannedToken, Type, Error = ParserEr
             .then(sep.clone().ignore_then(type_inner.clone()).repeated())
             .or_not()
     )
-    .map(|opt_types| {
-        match opt_types {
+    .map_with_span(|opt_types, span| {
+        let node = match opt_types {
             None => Type::Tuple(vec![]),
             Some((first, rest)) => {
                 if rest.is_empty() {
-                    first
+                    return first;
                 } else {
-                    let mut types = vec![first];
-                    types.extend(rest);
+                    let mut types = vec![first.node];
+                    types.extend(rest.into_iter().map(|p| p.node));
                     Type::Tuple(types)
                 }
             }
-        }
+        };
+        Spanned::new(node, span.into())
     })
 }
 
-/// Parse a function type: A B -> C
-fn function_type_inner(base_type: impl Parser<SpannedToken, Type, Error = ParserError> + Clone + 'static)
-    -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
+fn function_type_inner(base_type: impl Parser<SpannedToken, Spanned<Type>, Error = ParserError> + Clone + 'static)
+    -> impl Parser<SpannedToken, Spanned<Type>, Error = ParserError> + Clone {
     base_type.clone()
         .then(token(Token::SimpleArrow).ignore_then(base_type).repeated().at_least(1))
-        .map(|(first, rest): (Type, Vec<Type>)| {
-            // Chain function types: A -> B -> C means A -> (B -> C)
-            // But Kata-lang might want (A B) -> C? 
-            // The spec says A B -> C is multi-argument.
-            // Let's implement right-associative for now as is common: A -> B -> C is A -> (B -> C)
-            let mut all = vec![first];
-            all.extend(rest);
+        .map_with_span(|(first, rest): (Spanned<Type>, Vec<Spanned<Type>>), span| {
+            let mut all = vec![first.node];
+            all.extend(rest.into_iter().map(|p| p.node));
             
             let mut it = all.into_iter().rev();
             let last = it.next().unwrap();
-            it.fold(last, |ret, arg| {
+            let node = it.fold(last, |ret, arg| {
                 Type::Function {
                     params: vec![arg],
                     return_type: Box::new(ret),
                 }
-            })
+            });
+            Spanned::new(node, span.into())
         })
 }
 
-/// Parse a refined type: (Type, predicate1, predicate2, ...)
-fn refined_type_inner(type_inner: impl Parser<SpannedToken, Type, Error = ParserError> + Clone + 'static)
-    -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
+fn refined_type_inner(type_inner: impl Parser<SpannedToken, Spanned<Type>, Error = ParserError> + Clone + 'static)
+    -> impl Parser<SpannedToken, Spanned<Type>, Error = ParserError> + Clone {
     between(
         token(Token::LParen),
         token(Token::RParen),
@@ -240,17 +187,17 @@ fn refined_type_inner(type_inner: impl Parser<SpannedToken, Type, Error = Parser
                     .at_least(1)
             )
     )
-    .map(|(base, predicates): (Type, Vec<Predicate>)| {
+    .map_with_span(|(base, predicates): (Spanned<Type>, Vec<Predicate>), span| {
         let predicate = if predicates.len() == 1 {
             predicates.into_iter().next().unwrap()
         } else {
             Predicate::And(predicates)
         };
         
-        Type::Refined {
-            base: Box::new(base),
+        Spanned::new(Type::Refined {
+            base: Box::new(base.node),
             predicate,
-        }
+        }, span.into())
     })
 }
 
@@ -258,16 +205,14 @@ fn refined_type_inner(type_inner: impl Parser<SpannedToken, Type, Error = Parser
 // TOP-LEVEL TYPE PARSER
 // ============================================================================
 
-/// Parse any type expression
-/// Tries complex types first to avoid partial matches
-pub fn type_expr() -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
+pub fn type_expr() -> impl Parser<SpannedToken, Spanned<Type>, Error = ParserError> + Clone {
     recursive(|typ| {
         let base = choice((
             refined_type_inner(typ.clone()),
             list_type_inner(typ.clone()),
             tuple_type_inner(typ.clone()),
             generic_type(),
-            type_var().map(Type::Var),
+            type_var().map_with_span(|v, span| Spanned::new(Type::Var(v), span.into())),
         ));
 
         choice((
@@ -275,61 +220,23 @@ pub fn type_expr() -> impl Parser<SpannedToken, Type, Error = ParserError> + Clo
             base,
         ))
     })
-    .map(|t| {
-        log::debug!("type_expr matched: {}", t);
-        t
-    })
-}
-
-/// Recursive type parser for complex types
-fn recursive_type() -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
-    recursive(|typ| {
-        choice((
-            // Function type: A B -> C
-            function_type_inner(typ.clone()),
-            // List type: [A]
-            list_type_inner(typ.clone()),
-            // Tuple type: (A B C)
-            tuple_type_inner(typ.clone()),
-            // Generic type or simple name
-            generic_type(),
-            // Type variable
-            type_var().map(Type::Var),
-        ))
-    })
-}
-
-/// Parse a tuple type (public version)
-pub fn tuple_type(type_inner: impl Parser<SpannedToken, Type, Error = ParserError> + Clone + 'static)
-    -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
-    tuple_type_inner(type_inner)
-}
-
-/// Parse a function type (public version)
-pub fn function_type(type_inner: impl Parser<SpannedToken, Type, Error = ParserError> + Clone + 'static)
-    -> impl Parser<SpannedToken, Type, Error = ParserError> + Clone {
-    function_type_inner(type_inner)
 }
 
 // ============================================================================
 // PREDICATE PARSERS
 // ============================================================================
 
-/// Parse a predicate for refined types
 fn predicate() -> impl Parser<SpannedToken, Predicate, Error = ParserError> + Clone {
     choice((
-        // Comparison: > _ 0, < _ 10, etc.
         compare_op()
             .then_ignore(token(Token::Hole))
             .then(literal_value())
             .map(|(op, value)| Predicate::Comparison { op, value }),
 
-        // Except: except TypeName
         token(Token::Except)
             .ignore_then(type_name())
             .map(Predicate::Except),
 
-        // Range: <= _ 25.0
         compare_op()
             .then_ignore(token(Token::Hole))
             .then(literal_value())
@@ -337,7 +244,6 @@ fn predicate() -> impl Parser<SpannedToken, Predicate, Error = ParserError> + Cl
     ))
 }
 
-/// Parse a comparison operator
 fn compare_op() -> impl Parser<SpannedToken, CompareOp, Error = ParserError> + Clone {
     choice((
         ident_named(">").map(|_| CompareOp::Gt),
@@ -349,7 +255,6 @@ fn compare_op() -> impl Parser<SpannedToken, CompareOp, Error = ParserError> + C
     ))
 }
 
-/// Parse a literal value for predicates
 fn literal_value() -> impl Parser<SpannedToken, LiteralValue, Error = ParserError> + Clone {
     filter_map(|_span: ParserSpan, spanned: SpannedToken| {
         match &spanned.token {
@@ -364,7 +269,6 @@ fn literal_value() -> impl Parser<SpannedToken, LiteralValue, Error = ParserErro
     })
 }
 
-/// Parse a function signature: Arg1 Arg2 => Return
 pub fn function_sig() -> impl Parser<SpannedToken, FunctionSig, Error = ParserError> + Clone {
     let arg_sep = choice((
         token(Token::Comma).ignored(),
@@ -377,17 +281,14 @@ pub fn function_sig() -> impl Parser<SpannedToken, FunctionSig, Error = ParserEr
         .then_ignore(token(Token::Arrow))
         .then(type_expr())
         .map(|(params, return_type)| {
-            log::debug!("function_sig matched with {} params", params.len());
-            FunctionSig::new(params, return_type)
+            FunctionSig::new(params.into_iter().map(|p| p.node).collect(), return_type.node)
         })
 }
 
-// Helper for newline
 fn newline() -> impl Parser<SpannedToken, (), Error = ParserError> + Clone {
     token(Token::Newline).ignored()
 }
 
-// Helper for matching identifier name
 fn ident_named(name: &str) -> impl Parser<SpannedToken, String, Error = ParserError> + Clone {
     let name = name.to_string();
     filter_map(move |_span: ParserSpan, spanned: SpannedToken| {
@@ -398,54 +299,3 @@ fn ident_named(name: &str) -> impl Parser<SpannedToken, String, Error = ParserEr
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::lexer::KataLexer;
-    use super::super::common::convert_result;
-    use super::super::error::ParseError;
-
-    fn parse_type(source: &str) -> Result<Type, Vec<ParseError>> {
-        let tokens = KataLexer::lex_with_indent(source)
-            .map_err(|e| e.into_iter().map(|e| ParseError::new(e.to_string(), e.span().clone())).collect::<Vec<_>>())?;
-        convert_result(type_expr().parse(tokens))
-    }
-
-    #[test]
-    fn test_simple_type() {
-        let result = parse_type("Int");
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), Type::Named { .. }));
-    }
-
-    #[test]
-    fn test_type_variable() {
-        // In Kata, T is CamelCase and indistinguishable from a named type at parse time
-        let result = parse_type("T");
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), Type::Named { .. }));
-    }
-
-    #[test]
-    fn test_tuple_type() {
-        let result = parse_type("(Int Float Text)");
-        assert!(result.is_ok());
-        match result.unwrap() {
-            Type::Tuple(types) => assert_eq!(types.len(), 3),
-            _ => panic!("Expected tuple type"),
-        }
-    }
-
-    #[test]
-    fn test_function_type() {
-        let result = parse_type("Int -> Float");
-        assert!(result.is_ok());
-        match result.unwrap() {
-            Type::Function { params, return_type } => {
-                assert_eq!(params.len(), 1);
-                assert!(matches!(*return_type, Type::Named { .. }));
-            }
-            _ => panic!("Expected function type"),
-        }
-    }
-}

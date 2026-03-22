@@ -1,9 +1,3 @@
-//! Abstract Syntax Tree for Kata Language
-//!
-//! This module defines the AST structures that represent a Kata program.
-//! The parser produces these structures from tokens, and subsequent
-//! compilation phases (type checking, IR generation) consume them.
-
 pub mod id;
 pub mod types;
 pub mod pattern;
@@ -12,7 +6,33 @@ pub mod stmt;
 pub mod decl;
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
+
+use crate::lexer::token::Span;
+
+/// A wrapper for AST nodes that includes their source code span.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Spanned<T> {
+    pub node: T,
+    pub span: Span,
+}
+
+impl<T> Spanned<T> {
+    pub fn new(node: T, span: Span) -> Self {
+        Self { node, span }
+    }
+
+    /// Map the inner node while preserving the span.
+    pub fn map<U, F>(self, f: F) -> Spanned<U>
+    where
+        F: FnOnce(T) -> U,
+    {
+        Spanned {
+            node: f(self.node),
+            span: self.span,
+        }
+    }
+}
 
 // Re-export with explicit visibility to avoid conflicts
 pub use id::{Ident, QualifiedIdent, Literal, Directive, CacheStrategy, RestartPolicy};
@@ -25,3 +45,4 @@ pub use decl::{
     EnumDef, VariantDef, VariantPayload, InterfaceDef, InterfaceMember,
     ImplDef, AliasDef, Import, Export,
 };
+pub use crate::lexer::token::Span as LexerSpan;

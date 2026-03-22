@@ -56,7 +56,7 @@ impl Checker {
 
     /// Resolves a prefix application by consuming atoms according to arity.
     /// Returns the typed expression and the remaining unconsumed atoms.
-    fn resolve_prefix_apply(&mut self, atoms: &mut Vec<Expr>) -> Result<(TypedExpr, Vec<Expr>), TypeError> {
+    fn resolve_prefix_apply(&mut self, atoms: &mut Vec<crate::ast::Spanned<Expr>>) -> Result<(TypedExpr, Vec<crate::ast::Spanned<Expr>>), TypeError> {
         if atoms.is_empty() {
             return Err(TypeError::UnboundVariable {
                 name: "Unexpected empty application".to_string(),
@@ -65,51 +65,78 @@ impl Checker {
         }
 
         let first = atoms.remove(0);
-        let dummy_span = Span { start: 0, end: 0 };
+        let span = first.span.clone();
 
         // 1. If it's a variable, it might be a function with a known arity
-        if let Expr::Var { name, .. } = &first {
+        if let Expr::Var { name, .. } = &first.node {
             // We clone the signatures to avoid borrowing self.env while calling self.resolve_prefix_apply
             if let Some(sigs) = self.env.lookup_dispatch(&name.0).cloned() {
-                // For simplicity, let's take the first one and consume its arity.
-                let sig = &sigs[0]; 
-                let arity = sig.params.len();
+                // For simplicity, we assume all signatures for a function have the same arity
+                let arity = sigs[0].params.len();
                 
                 let mut typed_args = Vec::new();
                 for _ in 0..arity {
                     if atoms.is_empty() {
                         return Err(TypeError::UnboundVariable {
                             name: format!("Function `{}` expects {} arguments, but only {} were provided. Use '_' for partial application.", name, arity, typed_args.len()),
-                            span: dummy_span,
+                            span: span,
                         });
                     }
                     let (arg_expr, _) = self.resolve_prefix_apply(atoms)?;
                     typed_args.push(arg_expr);
                 }
 
-                // Unify and return
-                let inst_sig = FunctionSig {
-                    params: sig.params.iter().map(|t| instantiate(t)).collect(),
-                    return_type: instantiate(&sig.return_type),
-                };
+                // Now find the signature that unifies with the arguments
+                let mut matched_sig = None;
+                let mut matched_subst = self.substitutions.clone();
 
-                for (p_formal, p_actual) in inst_sig.params.iter().zip(typed_args.iter()) {
-                    let s = unify(p_formal, &p_actual.typ, &dummy_span)?;
-                    self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
+                for sig in &sigs {
+                    let inst_sig = FunctionSig {
+                        params: sig.params.iter().map(|t| instantiate(t)).collect(),
+                        return_type: instantiate(&sig.return_type),
+                    };
+
+                    let mut temp_subst = self.substitutions.clone();
+                    let mut possible = true;
+
+                    for (p_formal, p_actual) in inst_sig.params.iter().zip(typed_args.iter()) {
+                        if let Ok(s) = unify(p_formal, &p_actual.typ, &self.env, &span) {
+                            temp_subst = crate::type_checker::inference::compose(&temp_subst, &s);
+                        } else {
+                            possible = false;
+                            break;
+                        }
+                    }
+
+                    if possible {
+                        matched_sig = Some(inst_sig);
+                        matched_subst = temp_subst;
+                        break;
+                    }
                 }
 
-                let final_ret_type = inst_sig.return_type.apply(&self.substitutions);
-                let typed_func = TypedExpr {
-                    kind: ExprKind::Var(name.clone()),
-                    typ: Type::function(inst_sig.params, inst_sig.return_type),
-                    span: dummy_span,
-                };
+                if let Some(inst_sig) = matched_sig {
+                    self.substitutions = matched_subst;
+                    let final_ret_type = inst_sig.return_type.apply(&self.substitutions);
+                    let typed_func = TypedExpr {
+                        kind: ExprKind::Var(name.clone()),
+                        typ: Type::function(inst_sig.params, inst_sig.return_type),
+                        span: span.clone(),
+                    };
 
-                return Ok((TypedExpr {
-                    kind: ExprKind::Apply { func: Box::new(typed_func), args: typed_args },
-                    typ: final_ret_type,
-                    span: dummy_span,
-                }, atoms.clone()));
+                    return Ok((TypedExpr {
+                        kind: ExprKind::Apply { func: Box::new(typed_func), args: typed_args },
+                        typ: final_ret_type,
+                        span: span,
+                    }, atoms.clone()));
+                } else {
+                    let arg_types: Vec<String> = typed_args.iter().map(|a| format!("{}", a.typ)).collect();
+                    return Err(TypeError::NoMatchingDispatch {
+                        func_name: name.0.clone(),
+                        args: typed_args.into_iter().map(|a| a.typ).collect(),
+                        span: span,
+                    });
+                }
             }
         }
 
@@ -151,7 +178,7 @@ impl Checker {
                             let mut temp_subst = self.substitutions.clone();
                             let mut possible = true;
                             for (p1, p2) in applied_sig.params.iter().zip(inst_avail.params.iter()) {
-                                if let Ok(s) = unify(p1, p2, &span) {
+                                if let Ok(s) = unify(p1, p2, &self.env, &span) {
                                     temp_subst = crate::type_checker::inference::compose(&temp_subst, &s);
                                 } else {
                                     possible = false;
@@ -160,7 +187,7 @@ impl Checker {
                             }
                             
                             if possible {
-                                if let Ok(_s) = unify(&applied_sig.return_type, &inst_avail.return_type, &span) {
+                                if let Ok(_s) = unify(&applied_sig.return_type, &inst_avail.return_type, &self.env, &span) {
                                     matched = true;
                                     // We don't necessarily want to commit the unification results back to self.substitutions
                                     // because the constraint is just a check that *some* implementation exists.
@@ -203,13 +230,13 @@ impl Checker {
     /// Entry point for type checking a whole module.
     /// Takes a list of top-level declarations that have already been
     /// topologically sorted and tree-shaken by the DAG.
-    pub fn check_module(&mut self, sorted_decls: Vec<TopLevel>) -> Result<Vec<TypedDecl>, TypeError> {
+    pub fn check_module(&mut self, sorted_decls: Vec<crate::ast::Spanned<TopLevel>>) -> Result<Vec<TypedDecl>, TypeError> {
         let mut typed_decls = Vec::new();
 
         // First pass: Register all type definitions and function signatures in the global environment
         // so that mutually recursive functions or out-of-order uses within the sorted components work.
         for decl in &sorted_decls {
-            self.register_global_signature(decl)?;
+            self.register_global_signature(&decl.node)?;
         }
 
         // Second pass: Actually type check the bodies
@@ -267,9 +294,11 @@ impl Checker {
                     match member {
                         crate::ast::decl::InterfaceMember::Signature(name, sig) => {
                             members.insert(name.0.clone(), sig.clone());
+                            self.env.register_dispatch(&name.0, sig.clone());
                         }
                         crate::ast::decl::InterfaceMember::FunctionDef(f) => {
                             members.insert(f.name.0.clone(), f.sig.clone());
+                            self.env.register_dispatch(&f.name.0, f.sig.clone());
                         }
                     }
                 }
@@ -297,11 +326,13 @@ impl Checker {
     // TOP-LEVEL DECLARATIONS
     // =========================================================================
 
-    fn check_top_level(&mut self, decl: TopLevel) -> Result<TypedDecl, TypeError> {
+    fn check_top_level(&mut self, spanned_decl: crate::ast::Spanned<TopLevel>) -> Result<TypedDecl, TypeError> {
+        let decl = spanned_decl.node;
+        let span = spanned_decl.span;
         // For now, we use a dummy span for top-level nodes since the AST doesn't
         // currently store spans on declarations. In a real compiler, the parser
         // would attach spans to `TopLevel` variants.
-        let dummy_span = Span { start: 0, end: 0 };
+        // let span = Span { start: 0, end: 0 };
 
         let kind = match decl {
             TopLevel::Function(f) => DeclKind::Function(self.check_function_def(f)?),
@@ -309,13 +340,13 @@ impl Checker {
             TopLevel::Data(d) => DeclKind::Data(self.check_data_def(d)?),
             TopLevel::Enum(e) => DeclKind::Enum(self.check_enum_def(e)?),
             TopLevel::Interface(i) => DeclKind::Interface(self.check_interface_def(i)?),
-            TopLevel::Implements(impl_def) => DeclKind::Implements(self.check_implements(impl_def, dummy_span)?),
+            TopLevel::Implements(impl_def) => DeclKind::Implements(self.check_implements(impl_def, span)?),
             TopLevel::Alias(a) => DeclKind::Alias(self.check_alias_def(a)?),
             TopLevel::Statement(s) => {
                 // Statements in top-level are treated as being in an "entry-point" action context.
                 // This allows `main!` calls at the end of the file.
                 self.in_action_context = true;
-                let typed_stmt = self.check_action_stmt(s)?;
+                let typed_stmt = self.check_action_stmt(crate::ast::Spanned::new(s, span.clone()))?;
                 self.in_action_context = false;
                 DeclKind::Statement(typed_stmt)
             }
@@ -323,7 +354,7 @@ impl Checker {
             TopLevel::Export(e) => DeclKind::Export(e.items.into_iter().map(|id| id.0).collect()),
         };
 
-        Ok(TypedDecl { kind, span: dummy_span })
+        Ok(TypedDecl { kind, span: span })
     }
 
     fn check_data_def(&mut self, d: crate::ast::decl::DataDef) -> Result<crate::tast::decl::TypedDataDef, TypeError> {
@@ -433,7 +464,7 @@ impl Checker {
             // If patterns are empty, fill with wildcards (handles 'otherwise:')
             if patterns.is_empty() {
                 for _ in 0..func.sig.params.len() {
-                    patterns.push(crate::ast::pattern::Pattern::Wildcard);
+                    patterns.push(crate::ast::Spanned::new(crate::ast::pattern::Pattern::Wildcard, crate::lexer::Span { start: 0, end: 0 }));
                 }
             }
 
@@ -480,7 +511,7 @@ impl Checker {
                 let mut checked_body = self.check_expr(body)?;
                 
                 // Unify the body's inferred type with the declared return type
-                let s = match unify(&checked_body.typ, &func.sig.return_type, &checked_body.span) {
+                let s = match unify(&checked_body.typ, &func.sig.return_type, &self.env, &checked_body.span) {
                     Ok(s) => s,
                     Err(e) => {
                         if let TypeError::TypeMismatch { expected, found, span } = e {
@@ -505,7 +536,7 @@ impl Checker {
             self.validate_constraints()?;
 
             typed_clauses.push(crate::tast::expr::TypedLambdaClause {
-                patterns,
+                patterns: patterns.into_iter().map(|p| p.node).collect(),
                 guards: vec![],
                 body: typed_body,
                 with: vec![], // TODO: TAST should probably store typed with bindings
@@ -564,7 +595,9 @@ impl Checker {
     /// Checks a pattern against an expected type, binding extracted variables to the environment.
     /// Returns the type that the pattern actually matches (usually the same as expected_type, 
     /// but unified/instantiated if expected_type had generics).
-    fn check_pattern(&mut self, pattern: &crate::ast::pattern::Pattern, expected_type: &Type, span: &Span) -> Result<Type, TypeError> {
+    fn check_pattern(&mut self, spanned_pattern: &crate::ast::Spanned<crate::ast::pattern::Pattern>, expected_type: &Type, dummy_span: &Span) -> Result<Type, TypeError> {
+        let span = &spanned_pattern.span;
+        let pattern = &spanned_pattern.node;
         match pattern {
             crate::ast::pattern::Pattern::Wildcard => {
                 Ok(expected_type.clone())
@@ -579,7 +612,7 @@ impl Checker {
                     crate::ast::id::Literal::Unit => Type::named("Unit"),
                 };
                 
-                let s = unify(&lit_type, expected_type, span)?;
+                let s = unify(&lit_type, expected_type, &self.env, span)?;
                 self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                 Ok(lit_type.apply(&self.substitutions))
             }
@@ -607,7 +640,7 @@ impl Checker {
                 } else {
                     // Try to unify expected_type with a generic tuple type
                     let fresh_tuple = Type::tuple(patterns.iter().map(|_| crate::type_checker::inference::fresh_type()).collect());
-                    let s = unify(&fresh_tuple, expected_type, span)?;
+                    let s = unify(&fresh_tuple, expected_type, &self.env, span)?;
                     self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                     
                     let resolved_tuple = fresh_tuple.apply(&self.substitutions);
@@ -637,13 +670,13 @@ impl Checker {
                 let mut matched_elem_type = elem_type.clone();
                 for p in elements {
                     let t = self.check_pattern(p, &matched_elem_type, span)?;
-                    let s = unify(&t, &matched_elem_type, span)?;
+                    let s = unify(&t, &matched_elem_type, &self.env, span)?;
                     self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                     matched_elem_type = matched_elem_type.apply(&self.substitutions);
                 }
 
                 let list_type = Type::generic("List", vec![matched_elem_type]);
-                let s = unify(&list_type, expected_type, span)?;
+                let s = unify(&list_type, expected_type, &self.env, span)?;
                 self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                 
                 if let Some(r) = rest {
@@ -656,7 +689,7 @@ impl Checker {
                 let elem_type = crate::type_checker::inference::fresh_type();
                 let list_type = Type::generic("List", vec![elem_type.clone()]);
                 
-                let s = unify(&list_type, expected_type, span)?;
+                let s = unify(&list_type, expected_type, &self.env, span)?;
                 self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                 
                 let resolved_elem = elem_type.apply(&self.substitutions);
@@ -689,63 +722,63 @@ impl Checker {
     // STATEMENTS (Action Context Only)
     // =========================================================================
 
-    fn check_action_stmt(&mut self, stmt: Stmt) -> Result<TypedStmt, TypeError> {
+    fn check_action_stmt(&mut self, spanned_stmt: crate::ast::Spanned<Stmt>) -> Result<TypedStmt, TypeError> {
+        let span = spanned_stmt.span;
+        let stmt = spanned_stmt.node;
         if !self.in_action_context {
             // This shouldn't happen structurally if the parser is correct,
             // but we double-check that statements only appear in actions.
             panic!("Compiler Bug: Found statement outside of an action context.");
         }
 
-        let dummy_span = Span { start: 0, end: 0 };
+        // let span = Span { start: 0, end: 0 };
 
         match stmt {
             Stmt::Expr(expr) => {
                 let typed_expr = self.check_expr(expr)?;
                 Ok(TypedStmt {
                     kind: StmtKind::Expr(typed_expr),
-                    span: dummy_span,
+                    span: span,
                 })
             }
             Stmt::Let { pattern, value } => {
                 let typed_value = self.check_expr(value)?;
-                
-                if let crate::ast::pattern::Pattern::Var(id) = &pattern {
-                    self.env.bind_var(&id.0, typed_value.typ.clone());
+
+                if let crate::ast::pattern::Pattern::Var(id) = &pattern.node {                    self.env.bind_var(&id.0, typed_value.typ.clone());
                 } else {
                     // TODO: Handle complex pattern destructurings
                 }
 
                 Ok(TypedStmt {
                     kind: StmtKind::Let {
-                        pattern,
+                        pattern: pattern.node,
                         value: typed_value,
                     },
-                    span: dummy_span,
+                    span: span,
                 })
             }
             Stmt::Var { pattern, value } => {
                 let typed_value = self.check_expr(value)?;
-                
-                if let crate::ast::pattern::Pattern::Var(id) = &pattern {
-                    self.env.bind_var(&id.0, typed_value.typ.clone());
+
+                if let crate::ast::pattern::Pattern::Var(id) = &pattern.node {                    self.env.bind_var(&id.0, typed_value.typ.clone());
                 }
 
                 Ok(TypedStmt {
                     kind: StmtKind::Var {
-                        pattern,
+                        pattern: pattern.node,
                         value: typed_value,
                     },
-                    span: dummy_span,
+                    span: span,
                 })
             }
             Stmt::Assign { name, value } => {
                 let typed_value = self.check_expr(value)?;
                 
                 if let Some(expected_typ) = self.env.lookup_var(&name.0) {
-                    let s = unify(&typed_value.typ, expected_typ, &dummy_span)?;
+                    let s = unify(&typed_value.typ, expected_typ, &self.env, &span)?;
                     self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                 } else {
-                    return Err(TypeError::UnboundVariable { name: name.0, span: dummy_span });
+                    return Err(TypeError::UnboundVariable { name: name.0, span: span });
                 }
 
                 Ok(TypedStmt {
@@ -753,18 +786,18 @@ impl Checker {
                         name,
                         value: typed_value,
                     },
-                    span: dummy_span,
+                    span: span,
                 })
             }
             Stmt::Return(expr) => {
                 let typed_expr = self.check_expr(expr)?;
                 Ok(TypedStmt {
                     kind: StmtKind::Return(typed_expr),
-                    span: dummy_span,
+                    span: span,
                 })
             }
-            Stmt::Break => Ok(TypedStmt { kind: StmtKind::Break, span: dummy_span }),
-            Stmt::Continue => Ok(TypedStmt { kind: StmtKind::Continue, span: dummy_span }),
+            Stmt::Break => Ok(TypedStmt { kind: StmtKind::Break, span: span }),
+            Stmt::Continue => Ok(TypedStmt { kind: StmtKind::Continue, span: span }),
             Stmt::Loop { body } => {
                 let mut typed_body = Vec::new();
                 self.env.enter_scope();
@@ -774,7 +807,7 @@ impl Checker {
                 self.env.exit_scope();
                 Ok(TypedStmt {
                     kind: StmtKind::Loop { body: typed_body },
-                    span: dummy_span,
+                    span: span,
                 })
             }
             Stmt::Match { value, cases } => {
@@ -785,15 +818,14 @@ impl Checker {
                     self.env.enter_scope();
                     
                     // Check pattern and bind variables
-                    self.check_pattern(&case.pattern, &typed_value.typ, &dummy_span)?;
+                    self.check_pattern(&case.pattern, &typed_value.typ, &span)?;
                     
                     let mut typed_body = Vec::new();
                     for s in case.body {
                         typed_body.push(self.check_action_stmt(s)?);
                     }
-                    
                     typed_cases.push(crate::tast::stmt::TypedMatchCase {
-                        pattern: case.pattern,
+                        pattern: case.pattern.node,
                         body: typed_body,
                     });
                     
@@ -805,13 +837,13 @@ impl Checker {
                         value: typed_value,
                         cases: typed_cases,
                     },
-                    span: dummy_span,
+                    span: span,
                 })
             }
             // ... Other statements (For, Select) would be implemented here
             _ => Err(TypeError::UnboundVariable { 
                 name: "Unimplemented statement check".to_string(), 
-                span: dummy_span 
+                span: span 
             }),
         }
     }
@@ -820,8 +852,10 @@ impl Checker {
     // EXPRESSIONS
     // =========================================================================
 
-    fn check_expr(&mut self, expr: Expr) -> Result<TypedExpr, TypeError> {
-        let dummy_span = Span { start: 0, end: 0 };
+    fn check_expr(&mut self, spanned_expr: crate::ast::Spanned<Expr>) -> Result<TypedExpr, TypeError> {
+        let span = spanned_expr.span;
+        let expr = spanned_expr.node;
+        // let span = Span { start: 0, end: 0 };
 
         match expr {
             Expr::Literal(lit) => {
@@ -836,7 +870,7 @@ impl Checker {
                 Ok(TypedExpr {
                     kind: ExprKind::Literal(lit),
                     typ,
-                    span: dummy_span,
+                    span: span,
                 })
             }
             
@@ -847,7 +881,7 @@ impl Checker {
                     
                     // If the user provided a type ascription (e.g., `x::Int`), unify it!
                     if let Some(asc) = type_ascription {
-                        let s = unify(&final_typ, &asc, &dummy_span)?;
+                        let s = unify(&final_typ, &asc, &self.env, &span)?;
                         self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                         final_typ = final_typ.apply(&self.substitutions);
                     }
@@ -855,7 +889,7 @@ impl Checker {
                     return Ok(TypedExpr {
                         kind: ExprKind::Var(name),
                         typ: final_typ,
-                        span: dummy_span,
+                        span: span,
                     });
                 }
                 
@@ -872,14 +906,14 @@ impl Checker {
                     return Ok(TypedExpr {
                         kind: ExprKind::Var(name),
                         typ: inst_type,
-                        span: dummy_span,
+                        span: span,
                     });
                 }
 
                 // 3. Variable not found
                 Err(TypeError::UnboundVariable {
                     name: name.0,
-                    span: dummy_span,
+                    span: span,
                 })
             }
 
@@ -895,12 +929,12 @@ impl Checker {
                     let arg_types: Vec<Type> = typed_args.iter().map(|a| a.typ.clone()).collect();
                     let ret_type = crate::type_checker::inference::fresh_type();
                     let expected_func_type = Type::function(arg_types, ret_type.clone());
-                    let s = unify(&typed_func.typ, &expected_func_type, &dummy_span)?;
+                    let s = unify(&typed_func.typ, &expected_func_type, &self.env, &span)?;
                     self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                     return Ok(TypedExpr {
                         kind: ExprKind::Apply { func: Box::new(typed_func), args: typed_args },
                         typ: ret_type.apply(&self.substitutions),
-                        span: dummy_span,
+                        span: span,
                     });
                 }
 
@@ -934,7 +968,7 @@ impl Checker {
                 Ok(TypedExpr {
                     kind: ExprKind::Tuple(typed_exprs),
                     typ: Type::tuple(types),
-                    span: dummy_span,
+                    span: span,
                 })
             }
             
@@ -944,7 +978,7 @@ impl Checker {
                 
                 for e in exprs {
                     let typed_e = self.check_expr(e)?;
-                    let s = unify(&typed_e.typ, &elem_type, &dummy_span)?;
+                    let s = unify(&typed_e.typ, &elem_type, &self.env, &span)?;
                     self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                     typed_exprs.push(typed_e);
                 }
@@ -955,7 +989,7 @@ impl Checker {
                 Ok(TypedExpr {
                     kind: ExprKind::List(typed_exprs),
                     typ: list_type,
-                    span: dummy_span,
+                    span: span,
                 })
             }
             
@@ -977,7 +1011,7 @@ impl Checker {
                 Ok(TypedExpr {
                     kind: ExprKind::Block(typed_exprs),
                     typ: block_type,
-                    span: dummy_span,
+                    span: span,
                 })
             }
             
@@ -991,10 +1025,10 @@ impl Checker {
                             self.env.bind_var(&name.0, typed_val.typ);
                         }
                         crate::ast::expr::WithBinding::Signature { name, sig } => {
-                            self.constraints.push(Constraint::Signature(name, sig, dummy_span.clone()));
+                            self.constraints.push(Constraint::Signature(name, sig, span.clone()));
                         }
                         crate::ast::expr::WithBinding::Interface { typ, interface } => {
-                            self.constraints.push(Constraint::Interface(typ, interface, dummy_span.clone()));
+                            self.constraints.push(Constraint::Interface(typ, interface, span.clone()));
                         }
                     }
                 }
@@ -1015,14 +1049,14 @@ impl Checker {
                 Ok(TypedExpr {
                     kind: ExprKind::Hole,
                     typ: crate::type_checker::inference::fresh_type(),
-                    span: dummy_span,
+                    span: span,
                 })
             }
 
             // ... Other expressions (Tuple, List, ExplicitApply, Pipeline) would be implemented here
             _ => Err(TypeError::UnboundVariable { 
                 name: "Unimplemented expression check".to_string(), 
-                span: dummy_span 
+                span: span 
             }),
         }
     }

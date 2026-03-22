@@ -32,6 +32,17 @@ pub fn ident() -> impl Parser<SpannedToken, String, Error = ParserError> + Clone
     })
 }
 
+/// Match an identifier that DOES NOT end with a bang (!)
+pub fn pure_ident() -> impl Parser<SpannedToken, String, Error = ParserError> + Clone {
+    ident().try_map(|name, span| {
+        if name.ends_with('!') {
+            Err(ParserError::custom(span, format!("Identifier '{}' cannot end with a bang '!' in this context", name)))
+        } else {
+            Ok(name)
+        }
+    })
+}
+
 /// Match a specific identifier by name
 pub fn ident_named(name: &str) -> impl Parser<SpannedToken, String, Error = ParserError> + Clone {
     let name = name.to_string();
@@ -218,38 +229,4 @@ pub fn to_parse_error(e: ParserError) -> ParseError {
 /// Convert ParseError from result
 pub fn convert_result<T>(result: Result<T, Vec<ParserError>>) -> Result<T, Vec<ParseError>> {
     result.map_err(|errors| errors.into_iter().map(to_parse_error).collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::lexer::KataLexer;
-
-    fn parse_tokens(source: &str) -> Vec<SpannedToken> {
-        KataLexer::lex_with_indent(source).unwrap()
-    }
-
-    #[test]
-    fn test_ident_parser() {
-        let tokens = parse_tokens("foo bar baz");
-        let result: Result<Vec<String>, _> = ident().repeated().parse(tokens);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), vec!["foo".to_string(), "bar".to_string(), "baz".to_string()]);
-    }
-
-    #[test]
-    fn test_int_literal_parser() {
-        let tokens = parse_tokens("42");
-        let result: Result<String, _> = int_literal().parse(tokens);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "42");
-    }
-
-    #[test]
-    fn test_string_literal_parser() {
-        let tokens = parse_tokens("\"hello\"");
-        let result: Result<String, _> = string_literal().parse(tokens);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "hello");
-    }
 }

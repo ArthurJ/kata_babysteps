@@ -9,17 +9,18 @@ use chumsky::prelude::*;
 use crate::lexer::{Token, SpannedToken};
 use crate::ast::id::{Ident, Literal};
 use crate::ast::pattern::Pattern;
-use super::common::{ident, token, between, ParserError, ParserSpan};
+use crate::ast::Spanned;
+use super::common::{ident, pure_ident, token, between, ParserError, ParserSpan};
 use super::literal::literal;
 use super::r#type::type_expr;
 
 /// Parse any pattern (including Cons)
-pub fn pattern() -> impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone {
+pub fn pattern() -> impl Parser<SpannedToken, Spanned<Pattern>, Error = ParserError> + Clone {
     full_pattern()
 }
 
 /// Parse a base pattern (excluding top-level Cons, used for lambda arguments to avoid `:` collision)
-pub fn base_pattern() -> impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone {
+pub fn base_pattern() -> impl Parser<SpannedToken, Spanned<Pattern>, Error = ParserError> + Clone {
     recursive(|base_pat| {
         let atom = choice((
             tuple_pattern(full_pattern()),
@@ -27,23 +28,23 @@ pub fn base_pattern() -> impl Parser<SpannedToken, Pattern, Error = ParserError>
             array_pattern(full_pattern()),
             variant_pattern(base_pat.clone()),
             range_pattern(),
-            literal().map(Pattern::Literal),
-            token(Token::Hole).map(|_| Pattern::Wildcard),
-            ident().map(|s| {
+            literal().map_with_span(|lit, span| Spanned::new(Pattern::Literal(lit), span.into())),
+            token(Token::Hole).map_with_span(|_, span| Spanned::new(Pattern::Wildcard, span.into())),
+            pure_ident().map_with_span(|s, span| {
                 log::debug!("base_pattern: ident matched '{}'", s);
-                Pattern::Var(Ident::new(s))
+                Spanned::new(Pattern::Var(Ident::new(s)), span.into())
             }),
         ));
 
         // Typed pattern: pattern::Type (higher precedence than Or)
         let typed = atom.clone()
             .then(token(Token::DoubleColon).ignore_then(type_expr()).or_not())
-            .map(|(pattern, type_annotation)| {
+            .map_with_span(|(pattern, type_annotation), span| {
                 match type_annotation {
-                    Some(type_annotation) => Pattern::Typed {
+                    Some(type_annotation) => Spanned::new(Pattern::Typed {
                         pattern: Box::new(pattern),
-                        type_annotation,
-                    },
+                        type_annotation: type_annotation.node,
+                    }, span.into()),
                     None => pattern,
                 }
             });
@@ -51,18 +52,18 @@ pub fn base_pattern() -> impl Parser<SpannedToken, Pattern, Error = ParserError>
         // Or pattern: p1 | p2 | p3 (lowest precedence)
         typed.clone()
             .then(token(Token::Pipe).ignore_then(typed.clone()).repeated())
-            .map(|(first, rest): (Pattern, Vec<Pattern>)| {
+            .map_with_span(|(first, rest): (Spanned<Pattern>, Vec<Spanned<Pattern>>), span| {
                 if rest.is_empty() {
                     first
                 } else {
-                    Pattern::Or(std::iter::once(first).chain(rest).collect())
+                    Spanned::new(Pattern::Or(std::iter::once(first).chain(rest).collect()), span.into())
                 }
             })
     })
 }
 
 /// Parse a full pattern (including Cons)
-pub fn full_pattern() -> impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone {
+pub fn full_pattern() -> impl Parser<SpannedToken, Spanned<Pattern>, Error = ParserError> + Clone {
     recursive(|pat| {
         // Atoms are the building blocks that don't have left recursion
         let atom = choice((
@@ -71,42 +72,25 @@ pub fn full_pattern() -> impl Parser<SpannedToken, Pattern, Error = ParserError>
             array_pattern(pat.clone()),
             variant_pattern(pat.clone()),
             range_pattern(),
-            literal().map(Pattern::Literal),
-            token(Token::Hole).map(|_| Pattern::Wildcard),
-            ident().map(|s| {
+            literal().map_with_span(|lit, span| Spanned::new(Pattern::Literal(lit), span.into())),
+            token(Token::Hole).map_with_span(|_, span| Spanned::new(Pattern::Wildcard, span.into())),
+            pure_ident().map_with_span(|s, span| {
                 log::debug!("full_pattern: ident matched '{}'", s);
-                Pattern::Var(Ident::new(s))
+                Spanned::new(Pattern::Var(Ident::new(s)), span.into())
             }),
         ));
 
-        // Cons pattern: head : tail (right-associative)
-        let cons = atom.clone()
-            .then(token(Token::Colon).ignore_then(atom.clone()).repeated())
-            .map(|(first, rest): (Pattern, Vec<Pattern>)| {
-                if rest.is_empty() {
-                    first
-                } else {
-                    let mut all = vec![first];
-                    all.extend(rest);
-                    
-                    let mut it = all.into_iter().rev();
-                    let last = it.next().unwrap();
-                    it.fold(last, |tail, head| Pattern::Cons {
-                        head: Box::new(head),
-                        tail: Box::new(tail),
-                    })
-                }
-            });
-
+        // Cons pattern is now handled in list_pattern [head : tail].
+        let cons = atom.clone();
         // Typed pattern: pattern::Type (higher precedence than Or)
         let typed = cons.clone()
             .then(token(Token::DoubleColon).ignore_then(type_expr()).or_not())
-            .map(|(pattern, type_annotation)| {
+            .map_with_span(|(pattern, type_annotation), span| {
                 match type_annotation {
-                    Some(type_annotation) => Pattern::Typed {
+                    Some(type_annotation) => Spanned::new(Pattern::Typed {
                         pattern: Box::new(pattern),
-                        type_annotation,
-                    },
+                        type_annotation: type_annotation.node,
+                    }, span.into()),
                     None => pattern,
                 }
             });
@@ -114,19 +98,19 @@ pub fn full_pattern() -> impl Parser<SpannedToken, Pattern, Error = ParserError>
         // Or pattern: p1 | p2 | p3 (lowest precedence)
         typed.clone()
             .then(token(Token::Pipe).ignore_then(typed.clone()).repeated())
-            .map(|(first, rest): (Pattern, Vec<Pattern>)| {
+            .map_with_span(|(first, rest): (Spanned<Pattern>, Vec<Spanned<Pattern>>), span| {
                 if rest.is_empty() {
                     first
                 } else {
-                    Pattern::Or(std::iter::once(first).chain(rest).collect())
+                    Spanned::new(Pattern::Or(std::iter::once(first).chain(rest).collect()), span.into())
                 }
             })
     })
 }
 
 /// Parse a tuple pattern: (p1 p2 p3)
-fn tuple_pattern(pat: impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone + 'static)
-    -> impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone {
+fn tuple_pattern(pat: impl Parser<SpannedToken, Spanned<Pattern>, Error = ParserError> + Clone + 'static)
+    -> impl Parser<SpannedToken, Spanned<Pattern>, Error = ParserError> + Clone {
     let sep = token(Token::Comma).or(token(Token::Newline)).ignored().repeated().or_not();
     
     between(
@@ -140,53 +124,72 @@ fn tuple_pattern(pat: impl Parser<SpannedToken, Pattern, Error = ParserError> + 
                 items
             })
     )
-    .map(|patterns: Vec<Pattern>| {
+    .map_with_span(|patterns: Vec<Spanned<Pattern>>, span| {
         // In Kata, (x) is just x, but (x y) is a Tuple
         if patterns.len() == 1 {
             patterns.into_iter().next().unwrap()
         } else {
-            Pattern::Tuple(patterns)
+            Spanned::new(Pattern::Tuple(patterns), span.into())
         }
     })
 }
 
-/// Parse a list pattern: [p1, p2, ...rest] or []
-fn list_pattern(pat: impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone + 'static)
-    -> impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone {
-    token(Token::LBracket)
-        .ignore_then(
-            pat.clone()
-                .then_ignore(token(Token::Comma).or_not())
-                .repeated()
-                .then(
-                    token(Token::DotDotDot)
-                        .ignore_then(pat.clone())
-                        .or_not()
-                )
-                .then_ignore(token(Token::RBracket))
+/// Parse a list pattern: [p1, p2, ...rest] or [] or [head : tail]
+fn list_pattern(pat: impl Parser<SpannedToken, Spanned<Pattern>, Error = ParserError> + Clone + 'static)
+    -> impl Parser<SpannedToken, Spanned<Pattern>, Error = ParserError> + Clone {
+
+    let normal_list = pat.clone()
+        .then_ignore(token(Token::Comma).or_not())
+        .repeated()
+        .then(
+            token(Token::DotDotDot)
+                .ignore_then(pat.clone())
+                .or_not()
         )
-        .map(|(elements, rest): (Vec<Pattern>, Option<Pattern>)| {
+        .map(|(elements, rest)| {
             Pattern::List {
                 elements,
                 rest: rest.map(Box::new),
             }
-        })
+        });
+
+    let cons_list = pat.clone()
+        .then(token(Token::Colon).ignore_then(pat.clone()).repeated().at_least(1))
+        .map(|(first, rest)| {
+            let mut all = vec![first];
+            all.extend(rest);
+            let mut it = all.into_iter().rev();
+            let last = it.next().unwrap();
+            let cons = it.fold(last, |tail, head| {
+                let tail_span = tail.span.clone();
+                Spanned::new(Pattern::Cons {
+                    head: Box::new(head),
+                    tail: Box::new(tail),
+                }, tail_span)
+            }); // using tail's span as fallback
+            cons.node
+        });
+
+    token(Token::LBracket)
+        .ignore_then(choice((cons_list, normal_list)))
+        .then_ignore(token(Token::RBracket))
+        .map_with_span(|pattern, span| Spanned::new(pattern, span.into()))
 }
 
 /// Parse an array pattern: {p1, p2, p3}
-fn array_pattern(pat: impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone + 'static)
-    -> impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone {
+fn array_pattern(pat: impl Parser<SpannedToken, Spanned<Pattern>, Error = ParserError> + Clone + 'static)
+    -> impl Parser<SpannedToken, Spanned<Pattern>, Error = ParserError> + Clone {
     between(
         token(Token::LBrace),
         token(Token::RBrace),
         pat.separated_by(token(Token::Comma).or(token(Token::Newline)).ignored()).at_least(0)
     )
-    .map(Pattern::Array)
+    .map_with_span(|items, span| Spanned::new(Pattern::Array(items), span.into()))
 }
 
 /// Parse a variant pattern: Name or Name(args)
-fn variant_pattern(pat: impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone + 'static)
-    -> impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone {
+fn variant_pattern(pat: impl Parser<SpannedToken, Spanned<Pattern>, Error = ParserError> + Clone + 'static)
+    -> impl Parser<SpannedToken, Spanned<Pattern>, Error = ParserError> + Clone {
     type_name()
         .then(
             between(
@@ -198,23 +201,23 @@ fn variant_pattern(pat: impl Parser<SpannedToken, Pattern, Error = ParserError> 
             )
             .or_not()
         )
-        .map(|(name, args): (Ident, Option<Vec<Pattern>>)| {
-            Pattern::Variant {
+        .map_with_span(|(name, args): (Ident, Option<Vec<Spanned<Pattern>>>), span| {
+            Spanned::new(Pattern::Variant {
                 name,
                 args: args.unwrap_or_default(),
-            }
+            }, span.into())
         })
 }
 
 /// Parse a range pattern: [1..10] or [1..=10]
-fn range_pattern() -> impl Parser<SpannedToken, Pattern, Error = ParserError> + Clone {
+fn range_pattern() -> impl Parser<SpannedToken, Spanned<Pattern>, Error = ParserError> + Clone {
     token(Token::LBracket)
         .ignore_then(literal())
         .then(token(Token::DotDot).map(|_| false).or(token(Token::DotDotEqual).map(|_| true)))
         .then(literal())
         .then_ignore(token(Token::RBracket))
-        .map(|((start, inclusive), end): ((Literal, bool), Literal)| {
-            Pattern::Range { start, end, inclusive }
+        .map_with_span(|((start, inclusive), end): ((Literal, bool), Literal), span| {
+            Spanned::new(Pattern::Range { start, end, inclusive }, span.into())
         })
 }
 
@@ -235,76 +238,3 @@ fn newline() -> impl Parser<SpannedToken, (), Error = ParserError> + Clone {
     token(Token::Newline).ignored()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::lexer::KataLexer;
-    use super::super::common::convert_result;
-    use super::super::error::ParseError;
-
-    fn parse_pattern(source: &str) -> Result<Pattern, Vec<ParseError>> {
-        let tokens = KataLexer::lex_with_indent(source)
-            .map_err(|e| e.into_iter().map(|e| ParseError::new(e.to_string(), e.span().clone())).collect::<Vec<_>>())?;
-        convert_result(pattern().parse(tokens))
-    }
-
-    #[test]
-    fn test_wildcard() {
-        let result = parse_pattern("_");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Pattern::Wildcard);
-    }
-
-    #[test]
-    fn test_var_pattern() {
-        let result = parse_pattern("x");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Pattern::Var(Ident::new("x")));
-    }
-
-    #[test]
-    fn test_literal_pattern() {
-        let result = parse_pattern("42");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Pattern::Literal(Literal::Int("42".to_string())));
-    }
-
-    #[test]
-    fn test_tuple_pattern() {
-        let result = parse_pattern("(a b c)");
-        assert!(result.is_ok());
-        let pat = result.unwrap();
-        match pat {
-            Pattern::Tuple(items) => assert_eq!(items.len(), 3),
-            _ => panic!("Expected tuple pattern"),
-        }
-    }
-
-    #[test]
-    fn test_variant_pattern() {
-        let result = parse_pattern("Ok(value)");
-        assert!(result.is_ok());
-        let pat = result.unwrap();
-        match pat {
-            Pattern::Variant { name, args } => {
-                assert_eq!(name.0, "Ok");
-                assert_eq!(args.len(), 1);
-            }
-            _ => panic!("Expected variant pattern"),
-        }
-    }
-
-    #[test]
-    fn test_unit_variant() {
-        let result = parse_pattern("None");
-        assert!(result.is_ok());
-        let pat = result.unwrap();
-        match pat {
-            Pattern::Variant { name, args } => {
-                assert_eq!(name.0, "None");
-                assert!(args.is_empty());
-            }
-            _ => panic!("Expected variant pattern"),
-        }
-    }
-}

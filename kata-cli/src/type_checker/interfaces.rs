@@ -4,7 +4,7 @@ use crate::type_checker::environment::Environment;
 use crate::type_checker::error::TypeError;
 use crate::ast::decl::ImplDef;
 use crate::lexer::Span;
-use crate::type_checker::inference::{unify, instantiate};
+use crate::type_checker::inference::{unify, instantiate, Substitutable};
 
 /// Checks the Orphan Rule for an implementation.
 ///
@@ -53,9 +53,39 @@ pub fn validate_interface_impl(env: &Environment, impl_def: &ImplDef, span: Span
             Some(f) => {
                 // Validate signature matches
                 // We'll instantiate the expected signature and try to unify it with the implementation.
+                // Substitute the interface name (Self) AND all generic parameters with the implementing type BEFORE instantiating!
+                let mut self_subst = std::collections::HashMap::new();
+                self_subst.insert(interface_name.clone(), crate::ast::types::Type::named(&impl_def.type_name.name));
+                
+                // Also find all free generic variables in the expected signature and map them to the implementor type
+                // In Kata, interfaces like HASH use 'hash :: A => Text' where A is the implementing type.
+                for p in &expected_sig.params {
+                    for var in p.free_type_vars() {
+                        if crate::type_checker::inference::is_generic_name(&var) {
+                            self_subst.insert(var, crate::ast::types::Type::named(&impl_def.type_name.name));
+                        }
+                    }
+                }
+                for var in expected_sig.return_type.free_type_vars() {
+                    if crate::type_checker::inference::is_generic_name(&var) {
+                        self_subst.insert(var, crate::ast::types::Type::named(&impl_def.type_name.name));
+                    }
+                }
+                
+                let expected_sig_subst = crate::ast::types::FunctionSig {
+                    params: expected_sig.params.iter().map(|t| {
+                        use crate::type_checker::inference::Substitutable;
+                        t.apply(&self_subst)
+                    }).collect(),
+                    return_type: {
+                        use crate::type_checker::inference::Substitutable;
+                        expected_sig.return_type.apply(&self_subst)
+                    },
+                };
+
                 let inst_expected = crate::ast::types::FunctionSig {
-                    params: expected_sig.params.iter().map(|t| instantiate(t)).collect(),
-                    return_type: instantiate(&expected_sig.return_type),
+                    params: expected_sig_subst.params.iter().map(|t| instantiate(t)).collect(),
+                    return_type: instantiate(&expected_sig_subst.return_type),
                 };
 
                 // Check arity first
@@ -66,18 +96,20 @@ pub fn validate_interface_impl(env: &Environment, impl_def: &ImplDef, span: Span
                     });
                 }
 
+                let mut subst = std::collections::HashMap::new();
                 // Try to unify params and return type
                 for (p1, p2) in f.sig.params.iter().zip(inst_expected.params.iter()) {
-                    if let Err(_) = unify(p1, p2, &span) {
-                        return Err(TypeError::TypeMismatch {
+                    match unify(&p1.apply(&subst), &p2.apply(&subst), env, &span) {
+                        Ok(s) => subst = crate::type_checker::inference::compose(&subst, &s),
+                        Err(_) => return Err(TypeError::TypeMismatch {
                             expected: p2.clone(),
                             found: p1.clone(),
                             span,
-                        });
+                        }),
                     }
                 }
-                
-                if let Err(_) = unify(&f.sig.return_type, &inst_expected.return_type, &span) {
+
+                if let Err(_) = unify(&f.sig.return_type.apply(&subst), &inst_expected.return_type.apply(&subst), env, &span) {
                     return Err(TypeError::TypeMismatch {
                         expected: inst_expected.return_type.clone(),
                         found: f.sig.return_type.clone(),

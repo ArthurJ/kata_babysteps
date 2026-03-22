@@ -10,11 +10,11 @@ bar :: (Int (Int Int)) => Int
 lambda (x (y z)):
     + x $(+ y z)
 
-# Pattern cons simples (x:xs)
+# Pattern cons simples [x:xs]
 sum_list :: List::Int => Int
 lambda []:
     0
-lambda x:xs:
+lambda [x:xs]:
     + x sum_list xs
 
 action main

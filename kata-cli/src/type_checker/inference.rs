@@ -58,6 +58,20 @@ impl Substitutable for Type {
                 }
             }
             // For named types, apply to their generic parameters.
+            // In Kata, Type::Named can also act as a generic variable if it's
+            // a single uppercase letter or ALL_CAPS (for interfaces).
+            Type::Named { name, params } if params.is_empty() && name.is_simple() => {
+                let s_name = &name.name;
+                if is_generic_name(s_name) {
+                    if let Some(t) = subst.get(s_name) {
+                        return t.apply(subst);
+                    }
+                }
+                Type::Named {
+                    name: name.clone(),
+                    params: Vec::new(),
+                }
+            }
             Type::Named { name, params } => Type::Named {
                 name: name.clone(),
                 params: params.iter().map(|p| p.apply(subst)).collect(),
@@ -83,9 +97,14 @@ impl Substitutable for Type {
             Type::Var(id) => {
                 vars.insert(id.0.clone());
             }
-            Type::Named { params, .. } => {
-                for p in params {
-                    vars.extend(p.free_type_vars());
+            Type::Named { name, params } => {
+                // Check if this named type is actually a generic variable
+                if params.is_empty() && name.is_simple() && is_generic_name(&name.name) {
+                    vars.insert(name.name.clone());
+                } else {
+                    for p in params {
+                        vars.extend(p.free_type_vars());
+                    }
                 }
             }
             Type::Tuple(types) => {
@@ -107,6 +126,13 @@ impl Substitutable for Type {
     }
 }
 
+/// Helper to check if a name follows the generic naming convention:
+/// - Single uppercase letter (A, T, E)
+/// - ALL_CAPS name (e.g. NUM)
+pub fn is_generic_name(name: &str) -> bool {
+    name.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
 /// Composes two substitutions. `compose(s1, s2)` means apply `s1` first, then `s2`.
 pub fn compose(s1: &Substitution, s2: &Substitution) -> Substitution {
     let mut result = s2.clone();
@@ -122,10 +148,20 @@ pub fn compose(s1: &Substitution, s2: &Substitution) -> Substitution {
 
 /// Attempts to unify two types, producing a Substitution that makes them equal.
 /// If they cannot be unified, returns a TypeError.
-pub fn unify(t1: &Type, t2: &Type, span: &Span) -> Result<Substitution, TypeError> {
+use crate::type_checker::environment::Environment;
+
+pub fn unify(t1: &Type, t2: &Type, env: &Environment, span: &Span) -> Result<Substitution, TypeError> {
     match (t1, t2) {
         // If they are exactly the same type, no substitution is needed.
         (a, b) if a == b => Ok(HashMap::new()),
+
+        // If either side is a generic Named type, treat it as a variable
+        (Type::Named { name, params }, t) if params.is_empty() && name.is_simple() && is_generic_name(&name.name) => {
+            bind_var(&name.name, t, span)
+        }
+        (t, Type::Named { name, params }) if params.is_empty() && name.is_simple() && is_generic_name(&name.name) => {
+            bind_var(&name.name, t, span)
+        }
 
         // If the left side is a variable, bind it to the right side.
         (Type::Var(id), t) | (t, Type::Var(id)) => bind_var(&id.0, t, span),
@@ -134,7 +170,7 @@ pub fn unify(t1: &Type, t2: &Type, span: &Span) -> Result<Substitution, TypeErro
         (Type::Tuple(types1), Type::Tuple(types2)) if types1.len() == types2.len() => {
             let mut subst = HashMap::new();
             for (ty1, ty2) in types1.iter().zip(types2.iter()) {
-                let s1 = unify(&ty1.apply(&subst), &ty2.apply(&subst), span)?;
+                let s1 = unify(&ty1.apply(&subst), &ty2.apply(&subst), env, span)?;
                 subst = compose(&subst, &s1);
             }
             Ok(subst)
@@ -145,22 +181,42 @@ pub fn unify(t1: &Type, t2: &Type, span: &Span) -> Result<Substitution, TypeErro
             if p1.len() == p2.len() => {
             let mut subst = HashMap::new();
             for (ty1, ty2) in p1.iter().zip(p2.iter()) {
-                let s1 = unify(&ty1.apply(&subst), &ty2.apply(&subst), span)?;
+                let s1 = unify(&ty1.apply(&subst), &ty2.apply(&subst), env, span)?;
                 subst = compose(&subst, &s1);
             }
-            let s_ret = unify(&r1.apply(&subst), &r2.apply(&subst), span)?;
+            let s_ret = unify(&r1.apply(&subst), &r2.apply(&subst), env, span)?;
             Ok(compose(&subst, &s_ret))
         }
 
         // Unify Named types: Result::T::E and Result::Int::Text
-        (Type::Named { name: n1, params: p1 }, Type::Named { name: n2, params: p2 })
-            if n1 == n2 && p1.len() == p2.len() => {
-            let mut subst = HashMap::new();
-            for (ty1, ty2) in p1.iter().zip(p2.iter()) {
-                let s1 = unify(&ty1.apply(&subst), &ty2.apply(&subst), span)?;
-                subst = compose(&subst, &s1);
+        (Type::Named { name: n1, params: p1 }, Type::Named { name: n2, params: p2 }) => {
+            if n1 == n2 && p1.len() == p2.len() {
+                let mut subst = HashMap::new();
+                for (ty1, ty2) in p1.iter().zip(p2.iter()) {
+                    let s1 = unify(&ty1.apply(&subst), &ty2.apply(&subst), env, span)?;
+                    subst = compose(&subst, &s1);
+                }
+                return Ok(subst);
             }
-            Ok(subst)
+
+            // Interface Satisfaction checks
+            // If n1 is an interface and t2 satisfies it:
+            if p1.is_empty() && env.interfaces.contains_key(&n1.name) {
+                if !env.satisfies_interface(t2, &n1.name) {
+                    return Err(TypeError::TypeMismatch { expected: t1.clone(), found: t2.clone(), span: span.clone() });
+                }
+                return Ok(HashMap::new());
+            }
+
+            // If n2 is an interface and t1 satisfies it:
+            if p2.is_empty() && env.interfaces.contains_key(&n2.name) {
+                if !env.satisfies_interface(t1, &n2.name) {
+                    return Err(TypeError::TypeMismatch { expected: t2.clone(), found: t1.clone(), span: span.clone() });
+                }
+                return Ok(HashMap::new());
+            }
+
+            return Err(TypeError::TypeMismatch { expected: t1.clone(), found: t2.clone(), span: span.clone() });
         }
 
         // If none of the above match, the types are incompatible.

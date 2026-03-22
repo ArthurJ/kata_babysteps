@@ -90,12 +90,12 @@ action test_csp (rx_a rx_b tx_c)
     use kata::ast::decl::TopLevel;
     use kata::ast::stmt::Stmt;
     
-    match &module.declarations[0] {
+    match &module.declarations[0].node {
         TopLevel::Action(action) => {
             // Find the loop, then the select
-            match &action.body[0] {
+            match &action.body[0].node {
                 Stmt::Loop { body } => {
-                    match &body[0] {
+                    match &body[0].node {
                         Stmt::Select { cases, timeout } => {
                             assert_eq!(cases.len(), 2);
                             assert!(timeout.is_some());

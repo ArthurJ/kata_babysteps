@@ -1,8 +1,8 @@
 zip :: [Int] => [Int]
 lambda []:
     []
-lambda x:xs:
-    x : zip xs
+lambda [x:xs]:
+    [x : $(zip xs)]
 
 action main
     let lista_a [1 2 3]

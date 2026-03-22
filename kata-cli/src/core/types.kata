@@ -63,9 +63,9 @@ interface NUM implements ORD SHOW
     - :: NUM NUM => NUM
     * :: NUM NUM => NUM
     ** :: NUM NUM => NUM
-    div :: NUM NUM => Optional::NUM
-    /   :: NUM NonZero => NUM
-    //  :: NUM NonZero => NUM
+    div :: NUM NonZero => Optional::Float
+    /   :: NUM NonZero => Float
+    //  :: NUM NonZero => Int
     mod :: NUM NonZero => NUM
 
 # ==========================================
@@ -95,7 +95,7 @@ Int implements NUM
     div :: Int NonZero => Optional::Float
 
     @ffi("kata_rt_mod_int")
-    mod :: Int Int => Int
+    mod :: Int NonZero => Int
 
     @ffi("kata_rt_eq_int")
     = :: Int Int => Bool
@@ -114,6 +114,9 @@ Int implements NUM
     
     @ffi("kata_rt_gt_int")
     str :: Int => Text
+
+    hash :: Int => Text
+    λ x: str x
 
 Float implements NUM
     @ffi("kata_rt_add_flt")
@@ -143,7 +146,7 @@ Float implements NUM
 
     @ffi("kata_rt_mod_flt")
     @comutative
-    mod :: Float NUM => Float
+    mod :: Float NonZero => Float
 
     @ffi("kata_rt_eq_flt")
     @comutative
@@ -167,6 +170,9 @@ Float implements NUM
     
     @ffi("kata_rt_gt_flt")
     str :: Float => Text
+
+    hash :: Float => Text
+    λ x: str x
     
     @ffi("kata_rt_round")
     round :: Float => Float

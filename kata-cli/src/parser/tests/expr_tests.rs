@@ -1,6 +1,7 @@
 //! Unit tests for expression parser
 
 use chumsky::Parser;
+use crate::ast::Spanned;
 use crate::ast::expr::Expr;
 use crate::ast::id::{Ident, Literal};
 use crate::lexer::KataLexer;
@@ -11,7 +12,7 @@ use crate::parser::expr::expression;
 fn parse_expr(source: &str) -> Result<Expr, Vec<ParseError>> {
     let tokens = KataLexer::lex_with_indent(source)
         .map_err(|e| e.into_iter().map(|e| ParseError::new(e.to_string(), e.span().clone())).collect::<Vec<_>>())?;
-    convert_result(expression().parse(tokens))
+    convert_result(expression().parse(tokens).map(|s| s.node))
 }
 
 #[test]
@@ -54,7 +55,7 @@ fn test_apply() {
     let expr = result.unwrap();
     match expr {
         Expr::Apply { func, args } => {
-            assert!(matches!(*func, Expr::Var { name: ref v, type_ascription: _ } if v.0 == "+"), "Expected func to be Var(+), got: {:?}", func);
+            assert!(matches!(func.node, Expr::Var { name: ref v, type_ascription: _ } if v.0 == "+"), "Expected func to be Var(+), got: {:?}", func);
             assert_eq!(args.len(), 2, "Expected 2 args, got: {:?}", args);
         }
         _ => panic!("Expected apply, got: {:?}", expr),
@@ -68,8 +69,8 @@ fn test_pipeline() {
     let expr = result.unwrap();
     match expr {
         Expr::Pipeline { value, func } => {
-            assert!(matches!(*value, Expr::Var { name: ref v, type_ascription: _ } if v.0 == "x"));
-            assert!(matches!(*func, Expr::Var { name: ref v, type_ascription: _ } if v.0 == "f"));
+            assert!(matches!(value.node, Expr::Var { name: ref v, type_ascription: _ } if v.0 == "x"));
+            assert!(matches!(func.node, Expr::Var { name: ref v, type_ascription: _ } if v.0 == "f"));
         }
         _ => panic!("Expected pipeline"),
     }
@@ -93,7 +94,7 @@ fn test_explicit_apply() {
     let expr = result.unwrap();
     match expr {
         Expr::ExplicitApply { func, args } => {
-            assert!(matches!(*func, Expr::Var { name: ref v, type_ascription: _ } if v.0 == "+"));
+            assert!(matches!(func.node, Expr::Var { name: ref v, type_ascription: _ } if v.0 == "+"));
             assert_eq!(args.len(), 2);
         }
         _ => panic!("Expected explicit apply"),

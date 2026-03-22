@@ -3,9 +3,19 @@ use kata::ast::types::{Type, FunctionSig};
 use kata::ast::decl::{TopLevel, ImplDef, FunctionDef};
 use kata::ast::expr::LambdaClause;
 use kata::ast::pattern::Pattern;
+use kata::ast::Spanned;
+use kata::lexer::Span;
 use kata::type_checker::checker::Checker;
 use kata::type_checker::environment::InterfaceInfo;
 use std::collections::HashMap;
+
+fn span() -> Span {
+    Span { start: 0, end: 0 }
+}
+
+fn spanned<T>(node: T) -> Spanned<T> {
+    Spanned::new(node, span())
+}
 
 #[test]
 fn test_valid_implementation() {
@@ -31,8 +41,8 @@ fn test_valid_implementation() {
     let impl_func = FunctionDef::new("+", num_sig)
         .add_clause(LambdaClause {
             patterns: vec![
-                Pattern::Var(Ident::new("x")),
-                Pattern::Var(Ident::new("y")),
+                spanned(Pattern::Var(Ident::new("x"))),
+                spanned(Pattern::Var(Ident::new("y"))),
             ],
             guards: vec![],
             body: None,
@@ -42,7 +52,7 @@ fn test_valid_implementation() {
     let impl_def = ImplDef::new(QualifiedIdent::simple("Int"), "NUM")
         .add_implementation(impl_func);
         
-    let result = checker.check_module(vec![TopLevel::Implements(impl_def)]);
+    let result = checker.check_module(vec![spanned(TopLevel::Implements(impl_def))]);
     assert!(result.is_ok(), "Expected valid implementation to pass, got {:?}", result.err());
 }
 
@@ -64,7 +74,7 @@ fn test_orphan_rule_violation() {
     // Create an implementation: ForeignType implements FOREIGN_IFACE
     let impl_def = ImplDef::new(QualifiedIdent::simple("ForeignType"), "FOREIGN_IFACE");
         
-    let result = checker.check_module(vec![TopLevel::Implements(impl_def)]);
+    let result = checker.check_module(vec![spanned(TopLevel::Implements(impl_def))]);
     
     assert!(result.is_err(), "Expected Orphan Rule violation to fail");
     let err = result.unwrap_err();
@@ -92,7 +102,7 @@ fn test_missing_member() {
     // Empty implementation (missing 'must_have')
     let impl_def = ImplDef::new(QualifiedIdent::simple("MyType"), "IFACE");
         
-    let result = checker.check_module(vec![TopLevel::Implements(impl_def)]);
+    let result = checker.check_module(vec![spanned(TopLevel::Implements(impl_def))]);
     
     assert!(result.is_err(), "Expected failure due to missing member");
     let err = result.unwrap_err();
@@ -131,7 +141,7 @@ fn test_signature_mismatch() {
     let impl_def = ImplDef::new(QualifiedIdent::simple("MyType"), "IFACE")
         .add_implementation(impl_func);
         
-    let result = checker.check_module(vec![TopLevel::Implements(impl_def)]);
+    let result = checker.check_module(vec![spanned(TopLevel::Implements(impl_def))]);
     
     assert!(result.is_err(), "Expected signature mismatch to fail");
     let err = result.unwrap_err();

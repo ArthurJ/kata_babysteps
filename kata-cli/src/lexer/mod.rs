@@ -3,7 +3,7 @@
 //! Tokenizes source code into a stream of tokens using logos.
 //! Handles indent/dedent synthesis for significant whitespace.
 
-mod token;
+pub mod token;
 mod lexer;
 mod error;
 

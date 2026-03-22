@@ -11,6 +11,7 @@ use super::expr::LambdaClause;
 use super::id::{Directive, Ident, QualifiedIdent};
 use super::stmt::Stmt;
 use super::types::{FunctionSig, Type};
+use super::Spanned;
 use std::fmt;
 
 // =============================================================================
@@ -23,7 +24,7 @@ pub struct Module {
     /// Module name (from file path)
     pub name: String,
     /// Top-level declarations
-    pub declarations: Vec<TopLevel>,
+    pub declarations: Vec<Spanned<TopLevel>>,
     /// Exports (if any)
     pub exports: Vec<Ident>,
     /// Imports
@@ -45,7 +46,7 @@ impl Module {
         self
     }
 
-    pub fn with_declarations(mut self, declarations: Vec<TopLevel>) -> Self {
+    pub fn with_declarations(mut self, declarations: Vec<Spanned<TopLevel>>) -> Self {
         self.declarations = declarations;
         self
     }
@@ -215,7 +216,7 @@ pub struct ActionDef {
     /// Compiler directives: @parallel, @restart, etc.
     pub directives: Vec<Directive>,
     /// Body statements
-    pub body: Vec<Stmt>,
+    pub body: Vec<Spanned<Stmt>>,
 }
 
 impl ActionDef {
@@ -244,7 +245,7 @@ impl ActionDef {
         self
     }
 
-    pub fn with_body(mut self, body: Vec<Stmt>) -> Self {
+    pub fn with_body(mut self, body: Vec<Spanned<Stmt>>) -> Self {
         self.body = body;
         self
     }
@@ -276,7 +277,7 @@ impl fmt::Display for ActionDef {
         }
         writeln!(f)?;
         for stmt in &self.body {
-            writeln!(f, "    {}", stmt)?;
+            writeln!(f, "    {}", stmt.node)?;
         }
         Ok(())
     }
@@ -775,78 +776,5 @@ impl fmt::Display for Export {
             write!(f, " {}", item)?;
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_function_def() {
-        let func = FunctionDef::new("soma", FunctionSig::binary(
-            Type::named("Int"),
-            Type::named("Int"),
-            Type::named("Int"),
-        ));
-        assert_eq!(func.name.to_string(), "soma");
-        assert_eq!(func.arity, 2);
-    }
-
-    #[test]
-    fn test_action_def() {
-        let action = ActionDef::new("main")
-            .with_params(vec![Ident::new("args")]);
-        assert_eq!(action.name.to_string(), "main");
-        assert_eq!(action.params.len(), 1);
-    }
-
-    #[test]
-    fn test_data_def() {
-        let data = DataDef::new("Vec2")
-            .add_field("x", Some(Type::named("Float")))
-            .add_field("y", Some(Type::named("Float")));
-        if let DataKind::Product(fields) = &data.kind {
-            assert_eq!(fields.len(), 2);
-        } else {
-            panic!("Expected Product kind");
-        }
-    }
-
-    #[test]
-    fn test_enum_def() {
-        let enum_def = EnumDef::new("Result")
-            .with_type_params(vec![Ident::new("T"), Ident::new("E")])
-            .add_typed_variant("Ok", Type::var("T"))
-            .add_typed_variant("Err", Type::var("E"));
-        assert_eq!(enum_def.variants.len(), 2);
-        assert_eq!(enum_def.type_params.len(), 2);
-    }
-
-    #[test]
-    fn test_interface_def() {
-        let interface = InterfaceDef::new("EQ")
-            .with_extends(vec![Ident::new("HASH")]);
-        assert_eq!(interface.name.to_string(), "EQ");
-        assert_eq!(interface.extends.len(), 1);
-    }
-
-    #[test]
-    fn test_impl_def() {
-        let impl_def = ImplDef::new(
-            QualifiedIdent::simple("Int"),
-            "NUM"
-        );
-        assert_eq!(impl_def.type_name.to_string(), "Int");
-        assert_eq!(impl_def.interface.to_string(), "NUM");
-    }
-
-    #[test]
-    fn test_import() {
-        let import = Import::Item {
-            module: "types".to_string(),
-            item: "NUM".to_string(),
-        };
-        assert_eq!(import.to_string(), "import types.NUM");
     }
 }

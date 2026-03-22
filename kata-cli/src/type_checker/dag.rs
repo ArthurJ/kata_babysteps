@@ -11,13 +11,14 @@ use crate::ast::decl::{Module, TopLevel};
 use crate::ast::id::Ident;
 use crate::ast::expr::Expr;
 use crate::ast::stmt::Stmt;
+use crate::ast::Spanned;
 
 /// A node in the dependency graph
 #[derive(Debug, Clone)]
 pub struct DependencyNode {
     pub id: Ident,
     pub dependencies: HashSet<Ident>,
-    pub declaration: TopLevel,
+    pub declaration: Spanned<TopLevel>,
 }
 
 /// The Dependency Graph (DAG) for a module
@@ -46,25 +47,16 @@ impl DependencyGraph {
     }
 
     /// Returns the declarations in topological order.
-    /// Uses Tarjan's algorithm (or similar SCC approach) to handle circular dependencies.
-    /// Recursive components are returned together, but the final list is flattened 
-    /// for compatibility with the current Checker.
-    pub fn topological_sort(&self) -> Result<Vec<TopLevel>, String> {
+    pub fn topological_sort(&self) -> Result<Vec<Spanned<TopLevel>>, String> {
         let mut result = Vec::new();
         let mut visited = HashSet::new();
         let mut visiting = HashSet::new();
         let mut order = Vec::new();
 
-        // 1. First DFS to get finishing times (post-order)
         for id in self.nodes.keys() {
             self.dfs_order(id, &mut visited, &mut order);
         }
 
-        // 2. Second DFS on transposed graph to find SCCs (simplified for now)
-        // Since we already have the first pass registering all signatures, 
-        // we can simply allow cycles in the topological sort by ignoring 
-        // the 'visiting' error for nodes that are part of a cycle.
-        
         visited.clear();
         for id in order.iter().rev() {
             if !visited.contains(id) {
@@ -94,7 +86,7 @@ impl DependencyGraph {
         id: &Ident,
         visited: &mut HashSet<Ident>,
         visiting: &mut HashSet<Ident>,
-        result: &mut Vec<TopLevel>
+        result: &mut Vec<Spanned<TopLevel>>
     ) {
         if visiting.contains(id) || visited.contains(id) {
             return;
@@ -115,40 +107,8 @@ impl DependencyGraph {
         visited.insert(id.clone());
     }
 
-    fn visit(
-        &self,
-        id: &Ident,
-        visited: &mut HashSet<Ident>,
-        visiting: &mut HashSet<Ident>,
-        result: &mut Vec<TopLevel>
-    ) -> Result<(), String> {
-        if visiting.contains(id) {
-            // Check if it's a self-recursion or a cycle.
-            // For now, the new topological_sort handles this better.
-            return Err(format!("Circular dependency detected involving `{}`", id));
-        }
-        
-        if !visited.contains(id) {
-            visiting.insert(id.clone());
-            
-            if let Some(node) = self.nodes.get(id) {
-                for dep in &node.dependencies {
-                    if self.nodes.contains_key(dep) {
-                        self.visit(dep, visited, visiting, result)?;
-                    }
-                }
-                result.push(node.declaration.clone());
-            }
-            
-            visiting.remove(id);
-            visited.insert(id.clone());
-        }
-        
-        Ok(())
-    }
-
     /// Filters the graph to keep only nodes reachable from the given entry points (Tree Shaking).
-    pub fn reachability_analysis(&self, roots: &[Ident]) -> Vec<TopLevel> {
+    pub fn reachability_analysis(&self, roots: &[Ident]) -> Vec<Spanned<TopLevel>> {
         let mut reachable_ids = HashSet::new();
         let mut queue = VecDeque::new();
 
@@ -167,8 +127,6 @@ impl DependencyGraph {
             }
         }
 
-        // Return declarations that are reachable, in some order
-        // (Note: usually combined with topological sort later)
         self.nodes.values()
             .filter(|n| reachable_ids.contains(&n.id))
             .map(|n| n.declaration.clone())
@@ -180,8 +138,8 @@ impl DependencyGraph {
 // HELPERS FOR DEPENDENCY DISCOVERY
 // =============================================================================
 
-fn get_declaration_id(decl: &TopLevel) -> Ident {
-    match decl {
+fn get_declaration_id(spanned_decl: &Spanned<TopLevel>) -> Ident {
+    match &spanned_decl.node {
         TopLevel::Function(f) => f.name.clone(),
         TopLevel::Action(a) => a.name.clone(),
         TopLevel::Data(d) => d.name.clone(),
@@ -192,25 +150,18 @@ fn get_declaration_id(decl: &TopLevel) -> Ident {
         TopLevel::Statement(_) => Ident::new("__top_level_stmt"),
         TopLevel::Import(_) => Ident::new("__import"),
         TopLevel::Export(_) => Ident::new("__export"),
-        }
-        }
+    }
+}
 
-
-fn find_dependencies(decl: &TopLevel) -> HashSet<Ident> {
+fn find_dependencies(spanned_decl: &Spanned<TopLevel>) -> HashSet<Ident> {
     let mut deps = HashSet::new();
-    match decl {
+    match &spanned_decl.node {
         TopLevel::Function(f) => {
-            // Sig dependencies (types)
-            for param in &f.sig.params {
-                add_type_deps(param, &mut deps);
-            }
+            for param in &f.sig.params { add_type_deps(param, &mut deps); }
             add_type_deps(&f.sig.return_type, &mut deps);
             
-            // Body dependencies (calls)
             for clause in &f.clauses {
-                if let Some(body) = &clause.body {
-                    add_expr_deps(body, &mut deps);
-                }
+                if let Some(body) = &clause.body { add_expr_deps(body, &mut deps); }
                 for with in &clause.with {
                     match with {
                         crate::ast::expr::WithBinding::Value { value, .. } => add_expr_deps(value, &mut deps),
@@ -227,20 +178,14 @@ fn find_dependencies(decl: &TopLevel) -> HashSet<Ident> {
             }
         }
         TopLevel::Action(a) => {
-            if let Some(ret) = &a.return_type {
-                add_type_deps(ret, &mut deps);
-            }
-            for stmt in &a.body {
-                add_stmt_deps(stmt, &mut deps);
-            }
+            if let Some(ret) = &a.return_type { add_type_deps(ret, &mut deps); }
+            for stmt in &a.body { add_stmt_deps(stmt, &mut deps); }
         }
         TopLevel::Data(d) => {
             match &d.kind {
                 crate::ast::decl::DataKind::Product(fields) => {
                     for f in fields {
-                        if let Some(t) = &f.type_annotation {
-                            add_type_deps(t, &mut deps);
-                        }
+                        if let Some(t) = &f.type_annotation { add_type_deps(t, &mut deps); }
                     }
                 }
                 crate::ast::decl::DataKind::Refinement(t) => add_type_deps(t, &mut deps),
@@ -254,14 +199,14 @@ fn find_dependencies(decl: &TopLevel) -> HashSet<Ident> {
                 }
             }
         }
-        TopLevel::Statement(s) => add_stmt_deps(s, &mut deps),
-        _ => {} // Interfaces and Impls will need more specific logic later
+        TopLevel::Statement(s) => add_stmt_deps(&Spanned::new(s.clone(), spanned_decl.span), &mut deps),
+        _ => {}
     }
     deps
 }
 
-fn add_expr_deps(expr: &Expr, deps: &mut HashSet<Ident>) {
-    match expr {
+fn add_expr_deps(spanned_expr: &Spanned<Expr>, deps: &mut HashSet<Ident>) {
+    match &spanned_expr.node {
         Expr::Var { name, .. } => { deps.insert(name.clone()); }
         Expr::Apply { func, args } | Expr::ExplicitApply { func, args } => {
             add_expr_deps(func, deps);
@@ -290,7 +235,7 @@ fn add_expr_deps(expr: &Expr, deps: &mut HashSet<Ident>) {
                         }
                         crate::ast::expr::WithBinding::Interface { typ, interface } => {
                             deps.insert(interface.clone());
-                            add_type_deps(typ, deps);
+                            add_type_deps(&typ, deps);
                         }
                     }
                 }
@@ -316,8 +261,8 @@ fn add_expr_deps(expr: &Expr, deps: &mut HashSet<Ident>) {
     }
 }
 
-fn add_stmt_deps(stmt: &Stmt, deps: &mut HashSet<Ident>) {
-    match stmt {
+fn add_stmt_deps(spanned_stmt: &Spanned<Stmt>, deps: &mut HashSet<Ident>) {
+    match &spanned_stmt.node {
         Stmt::Let { value, .. } | Stmt::Var { value, .. } | Stmt::Assign { value, .. } => {
             add_expr_deps(value, deps);
         }
