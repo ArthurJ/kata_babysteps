@@ -1,0 +1,11 @@
+interface A implements B
+    a :: A => Int
+
+interface B implements A
+    b :: B => Int
+
+Int implements A
+    a :: Int => Int
+    λ x: x
+    b :: Int => Int
+    λ x: x

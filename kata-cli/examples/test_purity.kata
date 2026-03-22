@@ -1,0 +1,10 @@
+action echo! (text)
+    ()
+
+minha_funcao_pura :: Text => Text
+lambda texto:
+    # Retornar uma action diretamente deve disparar o erro de pureza
+    echo! texto
+
+action main! ()
+    let resultado $(minha_funcao_pura "Olá")

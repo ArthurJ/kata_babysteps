@@ -1,0 +1,3 @@
+action main
+    let teste "1"
+    echo! teste
