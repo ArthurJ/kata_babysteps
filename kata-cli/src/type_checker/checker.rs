@@ -327,8 +327,22 @@ impl Checker {
                 self.env.register_interface(info, true);
             }
             TopLevel::Implements(impl_def) => {
-                // Register the nominal subtyping explicitly
-                self.env.register_implementation(&impl_def.type_name.name, &impl_def.interface.0);
+                // Register the nominal subtyping explicitly for this interface and all its parents!
+                let type_name = &impl_def.type_name.name;
+                let interface_name = &impl_def.interface.0;
+                self.env.register_implementation(type_name, interface_name);
+                
+                // Helper closure to register parents (simulated with a loop or we can just fetch all parents)
+                // Since we don't have an easy recursive closure here, we can do it iteratively
+                let mut queue = vec![interface_name.clone()];
+                while let Some(current_iface) = queue.pop() {
+                    self.env.register_implementation(type_name, &current_iface);
+                    if let Some(info) = self.env.interfaces.get(&current_iface) {
+                        for parent in &info.extends {
+                            queue.push(parent.clone());
+                        }
+                    }
+                }
 
                 // Register all functions in the implementation for multiple dispatch
                 for f in &impl_def.implementations {
