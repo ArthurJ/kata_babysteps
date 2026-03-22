@@ -58,6 +58,10 @@ pub struct Environment {
 
     /// Tracks which interfaces were defined in the current module (for Orphan Rule)
     pub local_interfaces: HashSet<String>,
+
+    /// Registry of which types formally implement which interfaces (Nominal Subtyping)
+    /// Maps a type name (e.g. "Float") to a set of interface names (e.g. "NUM", "EQ")
+    pub type_implements: HashMap<String, HashSet<String>>,
 }
 
 impl Environment {
@@ -70,6 +74,7 @@ impl Environment {
             interfaces: HashMap::new(),
             local_types: HashSet::new(),
             local_interfaces: HashSet::new(),
+            type_implements: HashMap::new(),
         }
     }
 
@@ -149,32 +154,44 @@ impl Environment {
         self.local_interfaces.contains(name)
     }
 
-    /// Checks if a type satisfies an interface, including transitive parent interfaces.
-    pub fn satisfies_interface(&self, typ: &Type, interface_name: &str) -> bool {
-        // 1. Check if the interface exists
-        let info = match self.interfaces.get(interface_name) {
-            Some(i) => i,
-            None => return false,
-        };
+    /// Registers that a specific type implements a specific interface
+    pub fn register_implementation(&mut self, type_name: &str, interface_name: &str) {
+        self.type_implements
+            .entry(type_name.to_string())
+            .or_insert_with(HashSet::new)
+            .insert(interface_name.to_string());
+    }
 
-        // 2. Check if all members of THIS interface are implemented for this type
-        // In Kata, we use Multiple Dispatch. A type satisfies a member if there is
-        // a signature in the dispatch table for that member name that matches the type.
-        // For now, we do a simplified check: is there ANY signature for this member?
-        // (A more rigorous check would unify the signature with the type)
+    /// Checks if a type satisfies an interface, including transitive parent interfaces.
+    pub fn satisfies_interface(&self, typ: &Type, interface_name: &str) -> Option<usize> {
+        // Fast path: Nominal subtyping check
+        if let Type::Named { name, params: _ } = typ {
+            if let Some(interfaces) = self.type_implements.get(&name.name) {
+                if interfaces.contains(interface_name) {
+                    return Some(1);
+                }
+            }
+        }
+
+        let info = self.interfaces.get(interface_name)?;
+
         for (member_name, _) in &info.members {
             if self.lookup_dispatch(member_name).is_none() {
-                return false;
+                return None;
             }
         }
 
-        // 3. Check all parent interfaces recursively
+        let mut max_depth = 1;
         for parent in &info.extends {
-            if !self.satisfies_interface(typ, parent) {
-                return false;
+            if let Some(depth) = self.satisfies_interface(typ, parent) {
+                if depth + 1 > max_depth {
+                    max_depth = depth + 1;
+                }
+            } else {
+                return None;
             }
         }
 
-        true
+        Some(max_depth)
     }
 }

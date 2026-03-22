@@ -150,70 +150,76 @@ pub fn compose(s1: &Substitution, s2: &Substitution) -> Substitution {
 /// If they cannot be unified, returns a TypeError.
 use crate::type_checker::environment::Environment;
 
-pub fn unify(t1: &Type, t2: &Type, env: &Environment, span: &Span) -> Result<Substitution, TypeError> {
+pub fn unify(t1: &Type, t2: &Type, env: &Environment, span: &Span) -> Result<(Substitution, usize), TypeError> {
     match (t1, t2) {
         // If they are exactly the same type, no substitution is needed.
-        (a, b) if a == b => Ok(HashMap::new()),
+        (a, b) if a == b => Ok((HashMap::new(), 0)),
 
         // If either side is a generic Named type, treat it as a variable
         (Type::Named { name, params }, t) if params.is_empty() && name.is_simple() && is_generic_name(&name.name) => {
-            bind_var(&name.name, t, span)
+            bind_var(&name.name, t, span).map(|s| (s, 100))
         }
         (t, Type::Named { name, params }) if params.is_empty() && name.is_simple() && is_generic_name(&name.name) => {
-            bind_var(&name.name, t, span)
+            bind_var(&name.name, t, span).map(|s| (s, 100))
         }
 
         // If the left side is a variable, bind it to the right side.
-        (Type::Var(id), t) | (t, Type::Var(id)) => bind_var(&id.0, t, span),
+        (Type::Var(id), t) | (t, Type::Var(id)) => bind_var(&id.0, t, span).map(|s| (s, 100)),
 
         // Unify Tuples: (A B) and (C D) unify if they have the same length and their elements unify.
         (Type::Tuple(types1), Type::Tuple(types2)) if types1.len() == types2.len() => {
             let mut subst = HashMap::new();
+            let mut score = 0;
             for (ty1, ty2) in types1.iter().zip(types2.iter()) {
-                let s1 = unify(&ty1.apply(&subst), &ty2.apply(&subst), env, span)?;
+                let (s1, sc) = unify(&ty1.apply(&subst), &ty2.apply(&subst), env, span)?;
                 subst = compose(&subst, &s1);
+                score += sc;
             }
-            Ok(subst)
+            Ok((subst, score))
         }
 
         // Unify Functions: A => B and C => D unify if A unifies with C and B unifies with D.
         (Type::Function { params: p1, return_type: r1 }, Type::Function { params: p2, return_type: r2 })
             if p1.len() == p2.len() => {
             let mut subst = HashMap::new();
+            let mut score = 0;
             for (ty1, ty2) in p1.iter().zip(p2.iter()) {
-                let s1 = unify(&ty1.apply(&subst), &ty2.apply(&subst), env, span)?;
+                let (s1, sc) = unify(&ty1.apply(&subst), &ty2.apply(&subst), env, span)?;
                 subst = compose(&subst, &s1);
+                score += sc;
             }
-            let s_ret = unify(&r1.apply(&subst), &r2.apply(&subst), env, span)?;
-            Ok(compose(&subst, &s_ret))
+            let (s_ret, sc2) = unify(&r1.apply(&subst), &r2.apply(&subst), env, span)?;
+            Ok((compose(&subst, &s_ret), score + sc2))
         }
 
         // Unify Named types: Result::T::E and Result::Int::Text
         (Type::Named { name: n1, params: p1 }, Type::Named { name: n2, params: p2 }) => {
             if n1 == n2 && p1.len() == p2.len() {
                 let mut subst = HashMap::new();
+                let mut score = 0;
                 for (ty1, ty2) in p1.iter().zip(p2.iter()) {
-                    let s1 = unify(&ty1.apply(&subst), &ty2.apply(&subst), env, span)?;
+                    let (s1, sc) = unify(&ty1.apply(&subst), &ty2.apply(&subst), env, span)?;
                     subst = compose(&subst, &s1);
+                    score += sc;
                 }
-                return Ok(subst);
+                return Ok((subst, score));
             }
 
             // Interface Satisfaction checks
             // If n1 is an interface and t2 satisfies it:
             if p1.is_empty() && env.interfaces.contains_key(&n1.name) {
-                if !env.satisfies_interface(t2, &n1.name) {
-                    return Err(TypeError::TypeMismatch { expected: t1.clone(), found: t2.clone(), span: span.clone() });
+                if let Some(depth) = env.satisfies_interface(t2, &n1.name) {
+                    return Ok((HashMap::new(), depth));
                 }
-                return Ok(HashMap::new());
+                return Err(TypeError::TypeMismatch { expected: t1.clone(), found: t2.clone(), span: span.clone() });
             }
 
             // If n2 is an interface and t1 satisfies it:
             if p2.is_empty() && env.interfaces.contains_key(&n2.name) {
-                if !env.satisfies_interface(t1, &n2.name) {
-                    return Err(TypeError::TypeMismatch { expected: t2.clone(), found: t1.clone(), span: span.clone() });
+                if let Some(depth) = env.satisfies_interface(t1, &n2.name) {
+                    return Ok((HashMap::new(), depth));
                 }
-                return Ok(HashMap::new());
+                return Err(TypeError::TypeMismatch { expected: t2.clone(), found: t1.clone(), span: span.clone() });
             }
 
             return Err(TypeError::TypeMismatch { expected: t1.clone(), found: t2.clone(), span: span.clone() });

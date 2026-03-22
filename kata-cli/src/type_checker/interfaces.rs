@@ -100,7 +100,7 @@ pub fn validate_interface_impl(env: &Environment, impl_def: &ImplDef, span: Span
                 // Try to unify params and return type
                 for (p1, p2) in f.sig.params.iter().zip(inst_expected.params.iter()) {
                     match unify(&p1.apply(&subst), &p2.apply(&subst), env, &span) {
-                        Ok(s) => subst = crate::type_checker::inference::compose(&subst, &s),
+                        Ok((s, _)) => subst = crate::type_checker::inference::compose(&subst, &s),
                         Err(_) => return Err(TypeError::TypeMismatch {
                             expected: p2.clone(),
                             found: p1.clone(),

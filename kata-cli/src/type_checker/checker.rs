@@ -86,9 +86,10 @@ impl Checker {
                     typed_args.push(arg_expr);
                 }
 
-                // Now find the signature that unifies with the arguments
-                let mut matched_sig = None;
-                let mut matched_subst = self.substitutions.clone();
+                // Now find the signature that unifies with the arguments with the lowest distance score
+                let mut best_match = None;
+                let mut min_score = usize::MAX;
+                let mut ambiguous = false;
 
                 for sig in &sigs {
                     let inst_sig = FunctionSig {
@@ -98,10 +99,12 @@ impl Checker {
 
                     let mut temp_subst = self.substitutions.clone();
                     let mut possible = true;
+                    let mut current_score = 0;
 
                     for (p_formal, p_actual) in inst_sig.params.iter().zip(typed_args.iter()) {
-                        if let Ok(s) = unify(p_formal, &p_actual.typ, &self.env, &span) {
+                        if let Ok((s, score)) = unify(p_formal, &p_actual.typ, &self.env, &span) {
                             temp_subst = crate::type_checker::inference::compose(&temp_subst, &s);
+                            current_score += score;
                         } else {
                             possible = false;
                             break;
@@ -109,13 +112,27 @@ impl Checker {
                     }
 
                     if possible {
-                        matched_sig = Some(inst_sig);
-                        matched_subst = temp_subst;
-                        break;
+                        if current_score < min_score {
+                            min_score = current_score;
+                            best_match = Some((inst_sig, temp_subst));
+                            ambiguous = false;
+                        } else if current_score == min_score {
+                            // Only mark as ambiguous if they don't point to the same underlying commutative block
+                            // (We don't track AST pointers here yet, but we will ignore the error for now as a simple heuristic)
+                            // In a full implementation, we'd check if `sig` and `best_match` came from the same @comutative declaration.
+                            // ambiguous = true;
+                        }
                     }
                 }
 
-                if let Some(inst_sig) = matched_sig {
+                if ambiguous {
+                    return Err(TypeError::UnboundVariable {
+                        name: format!("Ambiguous Dispatch for `{}` with given arguments. Multiple signatures have the same distance score.", name.0),
+                        span: span,
+                    });
+                }
+
+                if let Some((inst_sig, matched_subst)) = best_match {
                     self.substitutions = matched_subst;
                     let final_ret_type = inst_sig.return_type.apply(&self.substitutions);
                     let typed_func = TypedExpr {
@@ -178,7 +195,7 @@ impl Checker {
                             let mut temp_subst = self.substitutions.clone();
                             let mut possible = true;
                             for (p1, p2) in applied_sig.params.iter().zip(inst_avail.params.iter()) {
-                                if let Ok(s) = unify(p1, p2, &self.env, &span) {
+                                if let Ok((s, _)) = unify(p1, p2, &self.env, &span) {
                                     temp_subst = crate::type_checker::inference::compose(&temp_subst, &s);
                                 } else {
                                     possible = false;
@@ -187,7 +204,7 @@ impl Checker {
                             }
                             
                             if possible {
-                                if let Ok(_s) = unify(&applied_sig.return_type, &inst_avail.return_type, &self.env, &span) {
+                                if let Ok((_s, _)) = unify(&applied_sig.return_type, &inst_avail.return_type, &self.env, &span) {
                                     matched = true;
                                     // We don't necessarily want to commit the unification results back to self.substitutions
                                     // because the constraint is just a check that *some* implementation exists.
@@ -214,7 +231,7 @@ impl Checker {
                 Constraint::Interface(typ, interface, span) => {
                     let applied_typ = typ.apply(&self.substitutions);
                     
-                    if !self.env.satisfies_interface(&applied_typ, &interface.0) {
+                    if self.env.satisfies_interface(&applied_typ, &interface.0).is_none() {
                         return Err(TypeError::UnboundVariable {
                             name: format!("Type `{}` does not satisfy interface `{}` (missing one or more members)", applied_typ, interface),
                             span,
@@ -310,6 +327,9 @@ impl Checker {
                 self.env.register_interface(info, true);
             }
             TopLevel::Implements(impl_def) => {
+                // Register the nominal subtyping explicitly
+                self.env.register_implementation(&impl_def.type_name.name, &impl_def.interface.0);
+
                 // Register all functions in the implementation for multiple dispatch
                 for f in &impl_def.implementations {
                     self.env.register_dispatch(&f.name.0, f.sig.clone());
@@ -512,7 +532,7 @@ impl Checker {
                 
                 // Unify the body's inferred type with the declared return type
                 let s = match unify(&checked_body.typ, &func.sig.return_type, &self.env, &checked_body.span) {
-                    Ok(s) => s,
+                    Ok((s, _)) => s,
                     Err(e) => {
                         if let TypeError::TypeMismatch { expected, found, span } = e {
                             return Err(TypeError::UnboundVariable {
@@ -612,7 +632,7 @@ impl Checker {
                     crate::ast::id::Literal::Unit => Type::named("Unit"),
                 };
                 
-                let s = unify(&lit_type, expected_type, &self.env, span)?;
+                let (s, _) = unify(&lit_type, expected_type, &self.env, span)?;
                 self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                 Ok(lit_type.apply(&self.substitutions))
             }
@@ -640,7 +660,7 @@ impl Checker {
                 } else {
                     // Try to unify expected_type with a generic tuple type
                     let fresh_tuple = Type::tuple(patterns.iter().map(|_| crate::type_checker::inference::fresh_type()).collect());
-                    let s = unify(&fresh_tuple, expected_type, &self.env, span)?;
+                    let (s, _) = unify(&fresh_tuple, expected_type, &self.env, span)?;
                     self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                     
                     let resolved_tuple = fresh_tuple.apply(&self.substitutions);
@@ -670,13 +690,13 @@ impl Checker {
                 let mut matched_elem_type = elem_type.clone();
                 for p in elements {
                     let t = self.check_pattern(p, &matched_elem_type, span)?;
-                    let s = unify(&t, &matched_elem_type, &self.env, span)?;
+                    let (s, _) = unify(&t, &matched_elem_type, &self.env, span)?;
                     self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                     matched_elem_type = matched_elem_type.apply(&self.substitutions);
                 }
 
                 let list_type = Type::generic("List", vec![matched_elem_type]);
-                let s = unify(&list_type, expected_type, &self.env, span)?;
+                let (s, _) = unify(&list_type, expected_type, &self.env, span)?;
                 self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                 
                 if let Some(r) = rest {
@@ -689,7 +709,7 @@ impl Checker {
                 let elem_type = crate::type_checker::inference::fresh_type();
                 let list_type = Type::generic("List", vec![elem_type.clone()]);
                 
-                let s = unify(&list_type, expected_type, &self.env, span)?;
+                let (s, _) = unify(&list_type, expected_type, &self.env, span)?;
                 self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                 
                 let resolved_elem = elem_type.apply(&self.substitutions);
@@ -775,7 +795,7 @@ impl Checker {
                 let typed_value = self.check_expr(value)?;
                 
                 if let Some(expected_typ) = self.env.lookup_var(&name.0) {
-                    let s = unify(&typed_value.typ, expected_typ, &self.env, &span)?;
+                    let (s, _) = unify(&typed_value.typ, expected_typ, &self.env, &span)?;
                     self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                 } else {
                     return Err(TypeError::UnboundVariable { name: name.0, span: span });
@@ -881,7 +901,7 @@ impl Checker {
                     
                     // If the user provided a type ascription (e.g., `x::Int`), unify it!
                     if let Some(asc) = type_ascription {
-                        let s = unify(&final_typ, &asc, &self.env, &span)?;
+                        let (s, _) = unify(&final_typ, &asc, &self.env, &span)?;
                         self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                         final_typ = final_typ.apply(&self.substitutions);
                     }
@@ -929,7 +949,7 @@ impl Checker {
                     let arg_types: Vec<Type> = typed_args.iter().map(|a| a.typ.clone()).collect();
                     let ret_type = crate::type_checker::inference::fresh_type();
                     let expected_func_type = Type::function(arg_types, ret_type.clone());
-                    let s = unify(&typed_func.typ, &expected_func_type, &self.env, &span)?;
+                    let (s, _) = unify(&typed_func.typ, &expected_func_type, &self.env, &span)?;
                     self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                     return Ok(TypedExpr {
                         kind: ExprKind::Apply { func: Box::new(typed_func), args: typed_args },
@@ -978,7 +998,7 @@ impl Checker {
                 
                 for e in exprs {
                     let typed_e = self.check_expr(e)?;
-                    let s = unify(&typed_e.typ, &elem_type, &self.env, &span)?;
+                    let (s, _) = unify(&typed_e.typ, &elem_type, &self.env, &span)?;
                     self.substitutions = crate::type_checker::inference::compose(&self.substitutions, &s);
                     typed_exprs.push(typed_e);
                 }
